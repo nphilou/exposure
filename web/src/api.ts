@@ -15,6 +15,7 @@ export interface SetupState {
 export interface Session { claimed: boolean; authenticated: boolean; device: { id: string; name: string } | null; publicUrl: string | null }
 export interface Device { id: string; name: string; createdAt: number; lastSeen: number; current: boolean }
 export interface FolderRow { name: string; note: string; kids: string[] }
+export interface FolderHere { looksLikePhotos: boolean; kids: string[] }
 export interface Progress { phase: 'idle' | 'scanning' | 'done'; count: number; current: string; error: string; shoots: number; shootsDone: number; photos: number; shootsFound: number; cameras: number }
 export class ApiError extends Error { details?: string[] }
 export class AuthError extends Error {}
@@ -40,8 +41,8 @@ export const api = {
   devices: () => j<Device[]>('/api/devices'),
   revoke: (id: string) => j(`/api/devices/${id}`, { method: 'DELETE' }),
   setupState: () => j<SetupState>('/api/setup/state'),
-  connect: (b: Record<string, unknown>) => j<{ pendingId: string; name: string; folders: FolderRow[] }>('/api/setup/connect', post(b)),
-  folders: (pendingId: string, path: string) => j<{ folders: FolderRow[] }>('/api/setup/folders', post({ pendingId, path })),
+  connect: (b: Record<string, unknown>) => j<{ pendingId: string; name: string; folders: FolderRow[]; here: FolderHere }>('/api/setup/connect', post(b)),
+  folders: (pendingId: string, path: string) => j<{ folders: FolderRow[]; here: FolderHere }>('/api/setup/folders', post({ pendingId, path })),
   useFolder: (pendingId: string, path: string) => j('/api/setup/use', post({ pendingId, path })),
   progress: () => j<Progress>('/api/setup/progress'),
   reset: () => j('/api/setup/reset', post({})),

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, ApiError, type FolderRow, type Progress, type SetupState } from './api';
+import { api, ApiError, type FolderHere, type FolderRow, type Progress, type SetupState } from './api';
 import { useStore } from './store';
 
 type Step = 'welcome' | 'source' | 'connect' | 'folder' | 'analyze';
@@ -22,6 +22,9 @@ export function Onboarding({ setup }: { setup: SetupState }) {
   const [busy, setBusy] = useState(false), [err, setErr] = useState(''), [details, setDetails] = useState<string[]>([]);
   const [pendingId, setPendingId] = useState(''), [connName, setConnName] = useState('');
   const [trail, setTrail] = useState<string[]>([]), [rows, setRows] = useState<FolderRow[]>([]), [sel, setSel] = useState('');
+  const [here, setHere] = useState<FolderHere>({ looksLikePhotos: false, kids: [] });
+  // When the current folder is itself the library (e.g. Images mounted as the root), preselect it rather than a child.
+  const show = (folders: FolderRow[], h: FolderHere) => { setRows(folders); setHere(h); setSel(h.looksLikePhotos ? '' : folders.find(f => f.note)?.name ?? ''); };
 
   const back = () => {
     setErr('');
@@ -35,7 +38,7 @@ export function Onboarding({ setup }: { setup: SetupState }) {
     setBusy(true); setErr(''); setDetails([]);
     try {
       const r = await api.connect(kind === 'local' ? { kind } : { kind, address: addr, username: user, password: pass, protocol: proto, port: port ? Number(port) : undefined, name: src === 'nas' ? 'This NAS' : src === 'ugreen' ? 'UGREEN NAS' : src === 'synology' ? 'Synology' : 'Home NAS' });
-      setPendingId(r.pendingId); setConnName(r.name); setRows(r.folders); setTrail([]); setSel(r.folders.find(f => f.note)?.name ?? '');
+      setPendingId(r.pendingId); setConnName(r.name); setTrail([]); show(r.folders, r.here);
       setStep('folder');
     } catch (e) { setErr((e as Error).message); setDetails(e instanceof ApiError ? e.details ?? [] : []); } finally { setBusy(false); }
   };
@@ -43,13 +46,13 @@ export function Onboarding({ setup }: { setup: SetupState }) {
   const openDir = async (name: string) => {
     const next = [...trail, name];
     setBusy(true);
-    try { const r = await api.folders(pendingId, '/' + next.join('/')); setRows(r.folders); setTrail(next); setSel(r.folders.find(f => f.note)?.name ?? ''); }
+    try { const r = await api.folders(pendingId, '/' + next.join('/')); setTrail(next); show(r.folders, r.here); }
     catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   };
   const goUp = async (to: number) => {
     const next = trail.slice(0, to);
     const r = await api.folders(pendingId, '/' + next.join('/'));
-    setRows(r.folders); setTrail(next); setSel('');
+    setTrail(next); show(r.folders, r.here);
   };
 
   const chosen = sel ? [...trail, sel] : trail;
@@ -139,6 +142,12 @@ export function Onboarding({ setup }: { setup: SetupState }) {
               <button onClick={() => void goUp(0)} disabled={!trail.length}>{connName}</button>
               {trail.map((t, i) => <span key={i}>/ <button onClick={() => void goUp(i + 1)} disabled={i === trail.length - 1}>{t}</button></span>)}
             </div>
+            {here.looksLikePhotos && <div>
+              <div className={`ob-row ${sel === '' ? 'sel' : ''}`} onClick={() => setSel('')}>
+                <span style={{ flex: 1 }}>This folder</span><span className="muted small">Looks like your photos</span>{sel === '' && <span>✓</span>}
+              </div>
+              {sel === '' && <div className="ob-kids mono">{here.kids.map(k => <span key={k}>{k}</span>)}</div>}
+            </div>}
             {rows.length === 0 && <div className="ob-row muted">No folders here.</div>}
             {rows.map(f => (
               <div key={f.name}>
@@ -153,8 +162,8 @@ export function Onboarding({ setup }: { setup: SetupState }) {
             ))}
           </div>
           {err && <p className="ob-err">{err}</p>}
-          <button className="btn big" style={{ marginTop: 28 }} disabled={busy || chosen.length === 0} onClick={() => void useFolder()}>
-            {chosen.length ? `Use “${chosen[chosen.length - 1]}”` : 'Choose a folder'}
+          <button className="btn big" style={{ marginTop: 28 }} disabled={busy || (chosen.length === 0 && !here.looksLikePhotos)} onClick={() => void useFolder()}>
+            {chosen.length ? `Use “${chosen[chosen.length - 1]}”` : here.looksLikePhotos ? 'Use this folder' : 'Choose a folder'}
           </button>
         </div>
       )}

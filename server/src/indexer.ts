@@ -9,7 +9,8 @@ import { getLibrary, type Library } from './library.js';
 
 export const events = new EventEmitter();
 
-export const SHOOT_RE = /^(\d{4})-(\d{2})-(\d{2})\s+(.+)$/;
+// "2016-01-25 Paris - Samsam", "2026-01-01", "2008-05 Allemagne"
+export const SHOOT_RE = /^(\d{4})-(\d{2})(?:-(\d{2}))?(?:\s+(.+))?$/;
 const MONTHS = ['january','february','march','april','may','june','july','august','september','october','november','december'];
 const posix = path.posix;
 
@@ -19,24 +20,63 @@ interface Found { key: 'edited' | 'camera' | 'raw'; label: string; fmt: string; 
 
 const safeList = async (lib: Library, p: string) => { try { return await lib.storage.list(p); } catch { return []; } };
 
-// Same stem across ARW / JPG / Export/jpg → one photo with up to three versions.
+// Subfolders that hold versions of the shoot's photos. Anything else inside a shoot is ignored.
+const SUBDIRS: Record<string, Found['key']> = { export: 'edited', raw: 'raw', jpg: 'camera', jpeg: 'camera' };
+
+/**
+ * Groups a shoot's files into photos. Files belong together when they share a stem, e.g.
+ *   DSC01234.ARW + DSC01234.JPG + Export/DSC01234.jpg
+ * Lightroom-style exports with a copy suffix pair with their RAW too:
+ *   RAW/_DSC9468.ARW + _DSC9468-1.jpg        (the -1 JPEG is the edit)
+ */
 async function scanShoot(lib: Library, folder: string) {
-  const groups = new Map<string, { name: string; versions: Found[] }>();
-  const add = (rel: string, size: number, mtime: number, key: Found['key'], label: string, fmt: string) => {
-    const stem = posix.parse(rel).name;
-    const g = groups.get(stem.toLowerCase()) ?? { name: stem, versions: [] };
-    g.versions.push({ key, label, fmt, size, file: rel, mtime });
-    groups.set(stem.toLowerCase(), g);
+  type F = { rel: string; stem: string; ext: string; size: number; mtime: number; dir: Found['key'] | null };
+  const files: F[] = [];
+  const collect = async (sub: string, dir: Found['key'] | null) => {
+    for (const e of await safeList(lib, posix.join(lib.base, folder, sub))) {
+      if (e.isDir) {
+        const k = sub ? undefined : SUBDIRS[e.name.toLowerCase()] ?? (/^export[ _-]/i.test(e.name) ? 'edited' : undefined);
+        if (k) await collect(e.name, k);
+        continue;
+      }
+      const ext = posix.extname(e.name).toLowerCase();
+      if (!JPEG_EXT.has(ext) && !RAW_EXT[ext]) continue;
+      files.push({ rel: sub ? `${sub}/${e.name}` : e.name, stem: posix.parse(e.name).name, ext, size: e.size, mtime: e.mtime, dir });
+    }
   };
-  for (const e of await safeList(lib, posix.join(lib.base, folder))) {
-    if (e.isDir) continue;
-    const ext = posix.extname(e.name).toLowerCase();
-    if (JPEG_EXT.has(ext)) add(e.name, e.size, e.mtime, 'camera', 'Camera', 'JPEG');
-    else if (RAW_EXT[ext]) add(e.name, e.size, e.mtime, 'raw', 'Original', RAW_EXT[ext]);
+  await collect('', null);
+
+  const rawStems = new Set(files.filter(f => RAW_EXT[f.ext]).map(f => f.stem.toLowerCase()));
+  const groups = new Map<string, { name: string; versions: Found[] }>();
+  for (const f of files) {
+    let stem = f.stem, key: Found['key'];
+    if (RAW_EXT[f.ext]) key = 'raw';
+    else {
+      const base = /^(.*?)[-_ ]\d{1,2}$/.exec(f.stem)?.[1];
+      if (!rawStems.has(stem.toLowerCase()) && base && rawStems.has(base.toLowerCase())) { stem = base; key = 'edited'; }
+      else key = f.dir === 'edited' ? 'edited' : 'camera';
+    }
+    const g = groups.get(stem.toLowerCase()) ?? { name: stem, versions: [] };
+    const v: Found = { key, size: f.size, file: f.rel, mtime: f.mtime,
+      label: key === 'edited' ? 'Edited' : key === 'raw' ? 'Original' : 'Camera', fmt: key === 'raw' ? RAW_EXT[f.ext] : 'JPEG' };
+    // One version per kind; with several exports of the same photo, keep the most recent.
+    const i = g.versions.findIndex(x => x.key === key);
+    if (i < 0) g.versions.push(v); else if (v.mtime > g.versions[i].mtime) g.versions[i] = v;
+    groups.set(stem.toLowerCase(), g);
   }
-  for (const e of await safeList(lib, posix.join(lib.base, folder, 'Export')))
-    if (!e.isDir && JPEG_EXT.has(posix.extname(e.name).toLowerCase())) add(`Export/${e.name}`, e.size, e.mtime, 'edited', 'Edited', 'JPEG');
   return [...groups.values()];
+}
+
+/** Shoot folders at the top of the library, or one level down (e.g. year folders: 2016/2016-01-25 Paris). */
+export async function findShoots(lib: Library) {
+  const out: { folder: string; name: string }[] = [];
+  for (const e of await lib.storage.list(lib.base)) {
+    if (!e.isDir || e.name.startsWith('@') || e.name.startsWith('#')) continue;
+    if (SHOOT_RE.test(e.name)) { out.push({ folder: e.name, name: e.name }); continue; }
+    for (const c of await safeList(lib, posix.join(lib.base, e.name)))
+      if (c.isDir && SHOOT_RE.test(c.name)) out.push({ folder: `${e.name}/${c.name}`, name: c.name });
+  }
+  return out.sort((a, b) => b.name.localeCompare(a.name));
 }
 
 /** EXIF + dimensions from the head of the file only, so remote sources don't download whole photos. */
@@ -64,13 +104,12 @@ export async function scan() {
   const t0 = Date.now();
   try {
     const seen = new Set<string>(), shootIds = new Set<string>();
-    const top = await lib.storage.list(lib.base);
-    progress.shoots = top.filter(e => e.isDir && SHOOT_RE.test(e.name)).length;
-    for (const e of top) {
-      const m = e.isDir && SHOOT_RE.exec(e.name);
-      if (!m) continue;
-      const [, y, mo, d, title] = m;
-      const shootId = crypto.createHash('sha1').update(e.name).digest('hex').slice(0, 12);
+    const found = await findShoots(lib);
+    progress.shoots = found.length;
+    for (const sh of found) {
+      const [, y, mo, d = '01', title = sh.name] = SHOOT_RE.exec(sh.name)!;
+      const e = { name: sh.folder };
+      const shootId = crypto.createHash('sha1').update(sh.folder).digest('hex').slice(0, 12);
       shootIds.add(shootId);
       progress.current = `${lib.base.replace(/\/$/, '')}/${e.name}`;
       const groups = await scanShoot(lib, e.name);
@@ -136,7 +175,7 @@ export async function watch() {
   if (lib.storage.localPath) {
     const { default: chokidar } = await import('chokidar');
     let timer: NodeJS.Timeout | undefined;
-    watcher = chokidar.watch(lib.storage.localPath(lib.base), { ignoreInitial: true, depth: 3, awaitWriteFinish: { stabilityThreshold: 2000 }, usePolling: process.env.EXPOSURE_POLL === '1' })
+    watcher = chokidar.watch(lib.storage.localPath(lib.base), { ignoreInitial: true, depth: 4, awaitWriteFinish: { stabilityThreshold: 2000 }, usePolling: process.env.EXPOSURE_POLL === '1' })
       .on('all', () => { clearTimeout(timer); timer = setTimeout(() => void scan(), 3000); });
   } else {
     poll = setInterval(() => void scan(), 10 * 60_000);

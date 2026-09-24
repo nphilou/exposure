@@ -17,7 +17,14 @@ const timeout = <T,>(p: Promise<T>, ms: number) => Promise.race([p, new Promise<
 const hidden = (n: string) => n.startsWith('@') || n.startsWith('#') || n.startsWith('.') || n === '$RECYCLE.BIN';
 
 async function folderInfo(storage: Storage, p: string) {
-  const kids = (await storage.list(p).catch(() => [])).filter(e => e.isDir && SHOOT_RE.test(e.name)).map(e => e.name).sort().reverse();
+  const dirs = (await storage.list(p).catch(() => [])).filter(e => e.isDir && !hidden(e.name));
+  let kids = dirs.filter(e => SHOOT_RE.test(e.name)).map(e => e.name);
+  // Shoots grouped in year folders: Images/2016/2016-01-25 Paris
+  for (const d of dirs.filter(d => /^\d{4}/.test(d.name) && !SHOOT_RE.test(d.name)).slice(0, 40)) {
+      const inner = (await storage.list(`${p.replace(/\/$/, '')}/${d.name}`).catch(() => [])).filter(e => e.isDir && SHOOT_RE.test(e.name));
+    kids.push(...inner.map(e => `${d.name}/${e.name}`));
+  }
+  kids = kids.sort((a, b) => b.split('/').pop()!.localeCompare(a.split('/').pop()!));
   return { looksLikePhotos: kids.length > 0, kids: [...kids.slice(0, 4), ...(kids.length > 4 ? [`and ${kids.length - 4} more`] : [])] };
 }
 
@@ -88,14 +95,14 @@ export function setupRoutes(app: FastifyInstance) {
       }
       const id = crypto.randomUUID();
       pending.set(id, { storage, conn, password: b.password, at: Date.now() });
-      try { return { pendingId: id, name: conn.name, folders: await listFolders(storage, '/') }; }
+      try { return { pendingId: id, name: conn.name, folders: await listFolders(storage, '/'), here: await folderInfo(storage, '/') }; }
       catch (e) { return reply.code(400).send({ error: `Connected, but couldn’t list folders: ${(e as Error).message}` }); }
     });
 
   app.post<{ Body: { pendingId: string; path: string } }>('/api/setup/folders', async (req, reply) => {
     const p = pending.get(req.body.pendingId);
     if (!p) return reply.code(410).send({ error: 'Connection expired. Please connect again.' });
-    return { folders: await listFolders(p.storage, req.body.path || '/') };
+    return { folders: await listFolders(p.storage, req.body.path || '/'), here: await folderInfo(p.storage, req.body.path || '/') };
   });
 
   app.post<{ Body: { pendingId: string; path: string } }>('/api/setup/use', async (req, reply) => {

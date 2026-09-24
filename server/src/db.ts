@@ -8,6 +8,7 @@ export const db = new DatabaseSync(path.join(config.dataDir, 'exposure.db'));
 
 db.exec(`
 PRAGMA journal_mode = WAL;
+PRAGMA synchronous = NORMAL; -- WAL + NORMAL is crash-safe; avoids an fsync per statement (slow on NAS disks)
 CREATE TABLE IF NOT EXISTS shoots (
   id TEXT PRIMARY KEY, folder TEXT NOT NULL, title TEXT NOT NULL,
   date TEXT NOT NULL, camera TEXT, count INTEGER NOT NULL DEFAULT 0, edited INTEGER NOT NULL DEFAULT 0
@@ -37,5 +38,6 @@ CREATE TABLE IF NOT EXISTS devices (
 );
 CREATE INDEX IF NOT EXISTS photos_taken ON photos(taken_at DESC);
 CREATE INDEX IF NOT EXISTS photos_shoot ON photos(shoot_id);
+CREATE INDEX IF NOT EXISTS photos_shoot_cover ON photos(shoot_id, has_edit DESC, taken_at);
 `);
 db.exec('PRAGMA foreign_keys = ON');

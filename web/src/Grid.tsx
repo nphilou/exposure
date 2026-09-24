@@ -8,6 +8,7 @@ export function Grid({ photos }: { photos: Photo[] }) {
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const open = useStore(s => s.open);
+  const loadMore = useStore(s => s.loadMore);
 
   useEffect(() => {
     const ro = new ResizeObserver(([e]) => setWidth(Math.floor(e.contentRect.width)));
@@ -17,6 +18,10 @@ export function Grid({ photos }: { photos: Photo[] }) {
 
   const items = useMemo(() => width ? layout(photos, width, width < 600 ? 130 : 210) : [], [photos, width]);
   const v = useVirtualizer({ count: items.length, getScrollElement: () => ref.current, estimateSize: i => items[i]?.height ?? 200, overscan: 4 });
+
+  // Fetch the next page when the user scrolls near the end of what's loaded.
+  const last = v.getVirtualItems().at(-1)?.index ?? 0;
+  useEffect(() => { if (items.length && last >= items.length - 8) void loadMore(); }, [last, items.length, loadMore]);
 
   // Row heights depend on width; drop the virtualizer's cached sizes whenever the layout changes.
   useEffect(() => v.measure(), [items, v]);

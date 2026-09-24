@@ -19,8 +19,23 @@ const PHOTO_SELECT = `
          EXISTS(SELECT 1 FROM favorites f WHERE f.photo_id = p.id) AS fav
   FROM photos p JOIN shoots s ON s.id = p.shoot_id`;
 
-function shape(p: any) {
-  const versions = rows<any>('SELECT key, label, fmt, size, file FROM versions WHERE photo_id = ? ORDER BY CASE key WHEN \'edited\' THEN 0 WHEN \'camera\' THEN 1 ELSE 2 END', p.id);
+const VERSION_ORDER = { edited: 0, camera: 1, raw: 2 } as Record<string, number>;
+
+/** Versions for many photos in one query instead of one query per photo. */
+function versionsFor(ids: string[]) {
+  const by = new Map<string, any[]>();
+  for (let i = 0; i < ids.length; i += 500) {
+    const chunk = ids.slice(i, i + 500);
+    for (const v of rows<any>(`SELECT photo_id, key, label, fmt, size, file FROM versions WHERE photo_id IN (${chunk.map(() => '?').join(',')})`, ...chunk)) {
+      const { photo_id, ...rest } = v;
+      (by.get(photo_id) ?? by.set(photo_id, []).get(photo_id)!).push(rest);
+    }
+  }
+  for (const list of by.values()) list.sort((a, b) => VERSION_ORDER[a.key] - VERSION_ORDER[b.key]);
+  return by;
+}
+
+function shape(p: any, versions: any[] = versionsFor([p.id]).get(p.id) ?? []) {
   return {
     id: p.id, name: p.name, shootId: p.shoot_id, shootTitle: p.shootTitle, folder: p.folder, takenAt: p.taken_at,
     camera: p.camera, lens: p.lens, focal: p.focal, fnum: p.fnum, shutter: p.shutter, iso: p.iso,
@@ -40,9 +55,13 @@ export async function build() {
     cameras: row<any>('SELECT COUNT(DISTINCT camera) n FROM photos')!.n, edited: row<any>('SELECT COUNT(*) n FROM photos WHERE has_edit = 1')!.n,
   }));
 
-  app.get('/api/shoots', async () => rows<any>('SELECT * FROM shoots ORDER BY date DESC').map(s => ({
-    ...s, cover: rows<any>(`SELECT id FROM photos WHERE shoot_id = ? ORDER BY has_edit DESC, taken_at LIMIT 1`, s.id)[0]?.id ?? null,
-  })));
+  app.get('/api/shoots', async () => {
+    // First photo per shoot (edited ones first) in a single pass.
+    const covers = new Map(rows<any>(`SELECT shoot_id, id FROM (
+        SELECT shoot_id, id, ROW_NUMBER() OVER (PARTITION BY shoot_id ORDER BY has_edit DESC, taken_at) AS rn FROM photos) WHERE rn = 1`)
+      .map(r => [r.shoot_id, r.id]));
+    return rows<any>('SELECT * FROM shoots ORDER BY date DESC').map(s => ({ ...s, cover: covers.get(s.id) ?? null }));
+  });
 
   app.get<{ Querystring: { q?: string; shoot?: string; album?: string; fav?: string; edited?: string; limit?: string; offset?: string } }>('/api/photos', async (req) => {
     const { q, shoot, album, fav, edited } = req.query;
@@ -56,8 +75,9 @@ export async function build() {
     if (fav === '1') where.push('EXISTS(SELECT 1 FROM favorites f WHERE f.photo_id = p.id)');
     if (edited === '1') where.push('p.has_edit = 1');
     const limit = Math.min(Number(req.query.limit ?? 500), 2000), offset = Number(req.query.offset ?? 0);
-    const sql = `${PHOTO_SELECT} ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY p.taken_at DESC LIMIT ? OFFSET ?`;
-    return rows<any>(sql, ...args, limit, offset).map(shape);
+    const sql = `${PHOTO_SELECT} ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY p.taken_at DESC, p.id LIMIT ? OFFSET ?`;
+    const list = rows<any>(sql, ...args, limit, offset), versions = versionsFor(list.map(p => p.id));
+    return list.map(p => shape(p, versions.get(p.id) ?? []));
   });
 
   app.get<{ Params: { id: string } }>('/api/photos/:id', async (req, reply) => {

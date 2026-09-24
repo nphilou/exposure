@@ -5,9 +5,10 @@ import { useStore } from './store';
 const fmtSize = (b: number) => (b / 1e6).toFixed(1) + ' MB';
 
 export function Viewer() {
-  const { photos, openId, open, toggleFav } = useStore();
+  const { photos, openId, open, toggleFav, loadMore } = useStore();
   const idx = photos.findIndex(p => p.id === openId);
   const p = photos[idx];
+  useEffect(() => { if (idx >= 0 && idx >= photos.length - 5) void loadMore(); }, [idx, photos.length, loadMore]);
   const [ver, setVer] = useState<string | undefined>();
 
   useEffect(() => setVer(undefined), [openId]);

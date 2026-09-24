@@ -95,6 +95,7 @@ export async function readMeta(lib: Library, rel: string, isRaw: boolean) {
 const fmtShutter = (t?: number) => !t ? null : t >= 1 ? `${t}s` : `1/${Math.round(1 / t)}`;
 const ORDER = { edited: 0, camera: 1, raw: 2 } as const;
 
+const META_CONCURRENCY = 8;
 let running = false;
 export async function scan() {
   const lib = getLibrary();
@@ -119,6 +120,8 @@ export async function scan() {
                   ON CONFLICT(id) DO UPDATE SET folder=excluded.folder, title=excluded.title, date=excluded.date`)
         .run(shootId, e.name, title, `${y}-${mo}-${d}`);
 
+      // Work out which photos changed, then read their EXIF in parallel (network round trips dominate on a NAS).
+      const todo: { g: typeof groups[number]; id: string; sig: string; src: Found }[] = [];
       for (const g of groups) {
         g.versions.sort((a, b) => ORDER[a.key] - ORDER[b.key]);
         const id = crypto.createHash('sha1').update(`${e.name}/${g.name.toLowerCase()}`).digest('hex').slice(0, 16);
@@ -127,27 +130,38 @@ export async function scan() {
         const sig = g.versions.map(v => `${v.file}:${v.size}:${v.mtime}`).join('|');
         const prev = db.prepare('SELECT sig, camera FROM photos WHERE id = ?').get(id) as { sig: string; camera: string | null } | undefined;
         if (prev?.sig === sig) { camera ??= prev.camera; continue; } // unchanged: skip EXIF
-
-        const src = g.versions.find(v => v.key !== 'raw') ?? g.versions[0];
-        const x = await readMeta(lib, `${e.name}/${src.file}`, src.key === 'raw');
-        const taken = x.DateTimeOriginal instanceof Date ? x.DateTimeOriginal.toISOString() : `${y}-${mo}-${d}T12:00:00.000Z`;
-        const cam = x.Model ? String(x.Model) : null;
-        camera ??= cam;
-        const hasEdit = g.versions.some(v => v.key === 'edited') ? 1 : 0;
-        const hay = [title, cam, x.LensModel, x.FocalLength && `${Math.round(x.FocalLength)}mm`, MONTHS[+mo - 1], y, g.name, hasEdit ? 'edited' : '']
-          .filter(Boolean).join(' ').toLowerCase();
-
-        db.prepare(`INSERT INTO photos (id, shoot_id, name, taken_at, camera, lens, focal, fnum, shutter, iso, width, height, has_edit, has_raw, sig, hay)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-          ON CONFLICT(id) DO UPDATE SET taken_at=excluded.taken_at, camera=excluded.camera, lens=excluded.lens, focal=excluded.focal,
-            fnum=excluded.fnum, shutter=excluded.shutter, iso=excluded.iso, width=excluded.width, height=excluded.height,
-            has_edit=excluded.has_edit, has_raw=excluded.has_raw, sig=excluded.sig, hay=excluded.hay`)
-          .run(id, shootId, g.name, taken, cam, x.LensModel ?? null, x.FocalLength ?? null, x.FNumber ?? null, fmtShutter(x.ExposureTime),
-            x.ISO ?? null, x.ExifImageWidth ?? null, x.ExifImageHeight ?? null, hasEdit, g.versions.some(v => v.key === 'raw') ? 1 : 0, sig, hay);
-        db.prepare('DELETE FROM versions WHERE photo_id = ?').run(id);
-        for (const v of g.versions)
-          db.prepare('INSERT INTO versions (photo_id, key, label, fmt, size, file) VALUES (?,?,?,?,?,?)').run(id, v.key, v.label, v.fmt, v.size, v.file);
+        todo.push({ g, id, sig, src: g.versions.find(v => v.key !== 'raw') ?? g.versions[0] });
       }
+      const metas: any[] = new Array(todo.length);
+      let next = 0;
+      await Promise.all(Array.from({ length: Math.min(META_CONCURRENCY, todo.length) }, async () => {
+        while (next < todo.length) { const i = next++; metas[i] = await readMeta(lib, `${e.name}/${todo[i].src.file}`, todo[i].src.key === 'raw'); }
+      }));
+
+      db.exec('BEGIN'); // one commit per shoot instead of one per statement
+      try {
+        todo.forEach(({ g, id, sig }, i) => {
+          const x = metas[i];
+          const taken = x.DateTimeOriginal instanceof Date ? x.DateTimeOriginal.toISOString() : `${y}-${mo}-${d}T12:00:00.000Z`;
+          const cam = x.Model ? String(x.Model) : null;
+          camera ??= cam;
+          const hasEdit = g.versions.some(v => v.key === 'edited') ? 1 : 0;
+          const hay = [title, cam, x.LensModel, x.FocalLength && `${Math.round(x.FocalLength)}mm`, MONTHS[+mo - 1], y, g.name, hasEdit ? 'edited' : '']
+            .filter(Boolean).join(' ').toLowerCase();
+
+          db.prepare(`INSERT INTO photos (id, shoot_id, name, taken_at, camera, lens, focal, fnum, shutter, iso, width, height, has_edit, has_raw, sig, hay)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET taken_at=excluded.taken_at, camera=excluded.camera, lens=excluded.lens, focal=excluded.focal,
+              fnum=excluded.fnum, shutter=excluded.shutter, iso=excluded.iso, width=excluded.width, height=excluded.height,
+              has_edit=excluded.has_edit, has_raw=excluded.has_raw, sig=excluded.sig, hay=excluded.hay`)
+            .run(id, shootId, g.name, taken, cam, x.LensModel ?? null, x.FocalLength ?? null, x.FNumber ?? null, fmtShutter(x.ExposureTime),
+              x.ISO ?? null, x.ExifImageWidth ?? null, x.ExifImageHeight ?? null, hasEdit, g.versions.some(v => v.key === 'raw') ? 1 : 0, sig, hay);
+          db.prepare('DELETE FROM versions WHERE photo_id = ?').run(id);
+          for (const v of g.versions)
+            db.prepare('INSERT INTO versions (photo_id, key, label, fmt, size, file) VALUES (?,?,?,?,?,?)').run(id, v.key, v.label, v.fmt, v.size, v.file);
+        });
+        db.exec('COMMIT');
+      } catch (err) { db.exec('ROLLBACK'); throw err; }
       db.prepare(`UPDATE shoots SET camera = COALESCE(?, camera),
           count = (SELECT COUNT(*) FROM photos WHERE shoot_id = shoots.id),
           edited = (SELECT COUNT(*) FROM photos WHERE shoot_id = shoots.id AND has_edit = 1) WHERE id = ?`).run(camera, shootId);
@@ -175,7 +189,7 @@ export async function watch() {
   if (lib.storage.localPath) {
     const { default: chokidar } = await import('chokidar');
     let timer: NodeJS.Timeout | undefined;
-    watcher = chokidar.watch(lib.storage.localPath(lib.base), { ignoreInitial: true, depth: 4, awaitWriteFinish: { stabilityThreshold: 2000 }, usePolling: process.env.EXPOSURE_POLL === '1' })
+    watcher = chokidar.watch(lib.storage.localPath(lib.base), { ignoreInitial: true, depth: 4, awaitWriteFinish: { stabilityThreshold: 2000 }, usePolling: process.env.EXPOSURE_POLL === '1', interval: 30_000, binaryInterval: 30_000 })
       .on('all', () => { clearTimeout(timer); timer = setTimeout(() => void scan(), 3000); });
   } else {
     poll = setInterval(() => void scan(), 10 * 60_000);

@@ -1,0 +1,36 @@
+services:
+  exposure:
+    image: ghcr.io/nphilou/exposure:latest   # or pin a version, e.g. :0.1.0; or replace with `build: .`
+    container_name: exposure
+    ports: ["8787:8787"]
+    environment:
+      # Address phones should use in the pairing QR (e.g. your Tailscale or tunnel URL). Optional.
+      EXPOSURE_PUBLIC_URL: ${EXPOSURE_PUBLIC_URL:-}
+      EXPOSURE_POLL: "1"           # needed if /media is a network mount
+    volumes:
+      # A folder on the NAS that contains your photos, mounted read-only. Exposure never modifies it.
+      # Mount a parent (e.g. /volume1) — you pick the exact folder in the app.
+      - ${EXPOSURE_MEDIA_DIR:?set EXPOSURE_MEDIA_DIR to your photos share}:/media:ro
+      - exposure-data:/data        # index, thumbnails, saved connection, paired devices
+    restart: unless-stopped
+
+  # Optional: reach Exposure from anywhere over your private Tailscale network, with HTTPS.
+  #   TS_AUTHKEY=tskey-... docker compose --profile tailscale up -d
+  # then set EXPOSURE_PUBLIC_URL=https://exposure.<your-tailnet>.ts.net so QR codes use it.
+  tailscale:
+    profiles: [tailscale]
+    image: tailscale/tailscale:latest
+    network_mode: service:exposure
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      TS_HOSTNAME: exposure
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_SERVE_CONFIG: /config/serve.json
+    cap_add: [NET_ADMIN]
+    volumes:
+      - ts-state:/var/lib/tailscale
+      - ./tailscale-serve.json:/config/serve.json:ro
+    devices: ["/dev/net/tun:/dev/net/tun"]
+volumes:
+  exposure-data:
+  ts-state:

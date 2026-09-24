@@ -1,0 +1,94 @@
+:root {
+  --bg:#f7f5f1; --panel:#fdfcfa; --line:rgba(28,24,18,.08); --line2:rgba(28,24,18,.14);
+  --tx:#1b1a18; --tx2:#6f6b64; --tx3:#a39e96; --hover:rgba(28,24,18,.045); --sel:rgba(28,24,18,.07);
+  --skel:#e9e6e0; --btn:#1b1a18; --btntx:#f7f5f1; --scrim:rgba(28,24,18,.22);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:#1c1b1a; --panel:#252322; --line:rgba(255,255,255,.07); --line2:rgba(255,255,255,.12);
+    --tx:#ecebe7; --tx2:#a29e97; --tx3:#6f6b65; --hover:rgba(255,255,255,.05); --sel:rgba(255,255,255,.08);
+    --skel:#282624; --btn:#ecebe7; --btntx:#1c1b1a; --scrim:rgba(0,0,0,.45);
+  }
+}
+* { box-sizing: border-box }
+html, body, #root { height: 100%; margin: 0 }
+body { background: var(--bg); color: var(--tx); font: 14px/1.4 Geist, system-ui, sans-serif; -webkit-font-smoothing: antialiased }
+button, input { font: inherit; color: inherit }
+button { cursor: pointer }
+.mono { font-family: 'Geist Mono', ui-monospace, monospace }
+
+.app { display: grid; grid-template-columns: 220px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); height: 100% }
+.side { border-right: 1px solid var(--line); padding: 20px 12px; display: flex; flex-direction: column; gap: 2px; overflow: auto }
+.logo { font-size: 22px; font-weight: 600; letter-spacing: -.045em; padding: 0 10px 16px }
+.nav { text-align: left; background: none; border: 0; padding: 7px 10px; border-radius: 8px; color: var(--tx2) }
+.nav:hover { background: var(--hover) } .nav.on { background: var(--sel); color: var(--tx) }
+.nav small { float: right; color: var(--tx3) }
+.side h4 { margin: 18px 10px 6px; font-size: 11px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--tx3) }
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100% }
+.top { display: flex; gap: 12px; align-items: center; padding: 14px 24px; border-bottom: 1px solid var(--line) }
+.top h1 { margin: 0; font-size: 18px; font-weight: 500; letter-spacing: -.02em; flex: 1 }
+.search { width: 260px; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--line2); background: var(--panel) }
+.search::placeholder { color: var(--tx3) }
+.scroll { flex: 1; overflow: auto; padding: 8px 24px 40px }
+.group { margin: 28px 0 10px; display: flex; align-items: baseline; gap: 10px }
+.group b { font-size: 16px; font-weight: 500; letter-spacing: -.02em } .group span { color: var(--tx3); font-size: 12px }
+.row { display: flex; gap: 6px; margin-bottom: 6px }
+.tile { position: relative; border: 0; padding: 0; border-radius: 4px; overflow: hidden; background: var(--skel); flex: none }
+.tile img { width: 100%; height: 100%; object-fit: cover; display: block }
+.tile .fav { position: absolute; right: 6px; top: 4px; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.6) }
+.empty { padding: 80px 0; text-align: center; color: var(--tx2) }
+
+.viewer { position: fixed; inset: 0; background: var(--bg); display: grid; grid-template-columns: 1fr 300px; z-index: 10 }
+.stage { display: grid; place-items: center; padding: 24px; min-width: 0; min-height: 0 }
+.stage img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 4px }
+.info { border-left: 1px solid var(--line); padding: 20px; overflow: auto; display: flex; flex-direction: column; gap: 16px }
+.info h2 { margin: 0; font-size: 18px; font-weight: 500 }
+.kv { display: grid; grid-template-columns: 90px 1fr; gap: 6px 10px; font-size: 13px } .kv dt { color: var(--tx3) } .kv dd { margin: 0 }
+.seg { display: flex; background: var(--sel); border-radius: 10px; padding: 3px; gap: 2px }
+.seg button { flex: 1; border: 0; background: none; padding: 6px 0; border-radius: 8px; color: var(--tx2) }
+.seg button.on { background: var(--panel); color: var(--tx); box-shadow: 0 1px 2px var(--scrim) }
+.btn { background: var(--btn); color: var(--btntx); border: 0; padding: 9px 14px; border-radius: 10px; text-align: center }
+.btn.ghost { background: none; color: var(--tx); border: 1px solid var(--line2) }
+.login { height: 100%; display: grid; place-content: center; gap: 12px; width: 280px; margin: auto }
+@media (max-width: 760px) {
+  .app { grid-template-columns: 1fr } .side { display: none } .search { width: 100% }
+  .viewer { grid-template-columns: 1fr; grid-template-rows: 1fr auto } .info { border-left: 0; border-top: 1px solid var(--line); max-height: 45vh }
+}
+
+/* Onboarding */
+.ob { position: fixed; inset: 0; display: flex; flex-direction: column; overflow: auto; background: var(--bg) }
+.ob-top { height: 72px; flex: none; display: flex; align-items: center; justify-content: space-between; padding: 0 36px }
+.ob-link { background: none; border: 0; color: var(--tx2); padding: 8px 0; font-size: 14px; display: flex; gap: 6px } .ob-link:hover { color: var(--tx) }
+.ob-welcome { flex: 1; display: flex; flex-direction: column; justify-content: space-between; min-height: 620px }
+.ob-hero { padding: 9vh 36px 0; max-width: 900px }
+.ob-hero h1 { margin: 0; font-size: clamp(44px, 7vw, 76px); line-height: 1; font-weight: 500; letter-spacing: -.045em }
+.ob-hero p { margin: 28px 0 0; font-size: 20px; line-height: 1.45; color: var(--tx2); letter-spacing: -.01em }
+.ob-cta { margin-top: 40px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap } .ob-cta span { font-size: 13px; color: var(--tx3) }
+.btn.big { height: 46px; padding: 0 24px; font-size: 15px; font-weight: 500; border-radius: 9px } .btn:disabled { opacity: .45; cursor: default } .btn:not(:disabled):hover { opacity: .86 }
+.ob-strip { display: flex; gap: 3px; overflow: hidden; height: 210px; margin-top: 56px } .ob-strip div { height: 210px }
+.ob-page { width: 100%; margin: 0 auto; padding: 6vh 24px 60px } .ob-page h1 { margin: 0 0 36px; font-size: 40px; font-weight: 500; letter-spacing: -.035em }
+.ob-page h1 + .lead { margin-top: -28px } .lead { margin: 0 0 32px; font-size: 15px; color: var(--tx2) }
+.ob-cap { font-size: 12px; color: var(--tx3); margin-bottom: 10px; letter-spacing: .02em }
+.ob-card { width: 100%; display: flex; align-items: center; gap: 14px; padding: 16px 18px; border-radius: 10px; border: 1px solid var(--line2); background: var(--panel); text-align: left; transition: border-color .16s } .ob-card:hover { border-color: var(--tx3) }
+.ob-card b { display: block; font-size: 16px; font-weight: 500 } .ob-card small { font-size: 13px; color: var(--tx2) }
+.ob-item { width: 100%; display: flex; gap: 14px; align-items: center; padding: 15px 4px; border: 0; border-bottom: 1px solid var(--line); background: none; text-align: left; font-size: 16px; transition: padding .16s } .ob-item:hover { padding-left: 10px }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: oklch(.74 .12 150); flex: none } .dot.small { width: 6px; height: 6px }
+.muted { color: var(--tx3); font-size: 13px } .small { font-size: 12px }
+.ob-field { display: flex; flex-direction: column; gap: 7px; margin-bottom: 18px } .ob-field span { font-size: 13px; color: var(--tx2) }
+.ob-field input, .ob-adv input, .ob-adv select { height: 44px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--line2); background: var(--panel); font-size: 15px; outline: none; width: 100% } .ob-field input:focus, .ob-adv input:focus { border-color: var(--tx3) }
+.ob-adv { margin-top: 10px; padding: 18px 0 4px; border-top: 1px solid var(--line); display: grid; grid-template-columns: 110px 1fr; gap: 14px 16px; align-items: center; font-size: 13px } .ob-adv > span:nth-child(odd) { color: var(--tx2) } .ob-adv input, .ob-adv select { height: 38px; font-size: 13px }
+.ob-err { color: oklch(.7 .15 40); font-size: 13px; margin: 16px 0 0 } .ob-foot { margin: 16px 0 0; font-size: 12px; color: var(--tx3); text-align: center }
+.ob-box { border: 1px solid var(--line2); border-radius: 12px; background: var(--panel); padding: 8px }
+.ob-crumbs { padding: 10px 12px 8px; font-size: 13px; color: var(--tx2); display: flex; align-items: center; gap: 8px; flex-wrap: wrap } .ob-crumbs button { background: none; border: 0; padding: 0; color: inherit } .ob-crumbs button:not(:disabled):hover { color: var(--tx); text-decoration: underline } .ob-crumbs button:disabled { cursor: default }
+.ob-row { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 0 8px 0 30px; border-radius: 7px; font-size: 15px; cursor: pointer } .ob-row:hover { background: var(--hover) } .ob-row.sel { background: var(--sel) }
+.ob-open { background: none; border: 0; color: var(--tx3); font-size: 18px; width: 28px; height: 28px; border-radius: 6px } .ob-open:hover { background: var(--hover); color: var(--tx) }
+.ob-kids { padding: 4px 0 8px 52px; display: flex; flex-direction: column; gap: 7px; font-size: 12px; color: var(--tx3) }
+.ob-count { font-size: 64px; font-weight: 500; letter-spacing: -.04em; font-variant-numeric: tabular-nums } .ob-bar { height: 3px; background: var(--sel); border-radius: 2px; margin: 28px 0 12px; overflow: hidden } .ob-bar div { height: 100%; background: var(--tx); transition: width .3s linear } .ob-cur { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.ob-stats { display: flex; gap: 48px; margin-bottom: 36px } .ob-stats b { display: block; font-size: 44px; font-weight: 500; letter-spacing: -.04em } .ob-stats span { color: var(--tx3); font-size: 13px }
+.ob-demo { display: flex; align-items: center; gap: 24px; padding: 22px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel) } .ob-demo .mono { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--tx2) }
+.ob-tile { width: 96px; aspect-ratio: 1.5; border-radius: 2px; background: repeating-linear-gradient(135deg, oklch(.55 .07 200) 0 6px, oklch(.5 .07 200) 6px 12px); box-shadow: 4px -4px 0 -1px var(--bg), 4px -4px 0 0 var(--line2), 8px -8px 0 -1px var(--bg), 8px -8px 0 0 var(--line2); margin: 0 8px 12px 0 }
+.nasbtn { display: flex; align-items: center; gap: 8px; text-align: left; background: none; border: 0; padding: 7px 10px; border-radius: 8px; color: var(--tx2); font-size: 13px } .nasbtn:hover { background: var(--hover) }
+.settings { max-width: 560px; padding: 24px 0; display: flex; flex-direction: column; gap: 14px } .settings h2 { margin: 0; font-size: 20px; font-weight: 500 }
+.pair-card { display: flex; gap: 20px; align-items: center; padding: 18px; border: 1px solid var(--line2); border-radius: 12px; background: var(--panel); flex-wrap: wrap }
+.pair-card img { border-radius: 8px; background: #fff }
+.pair-code { font-size: 26px; letter-spacing: .08em; margin: 10px 0 4px }

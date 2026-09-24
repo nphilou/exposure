@@ -1,0 +1,13 @@
+{
+  "name": "exposure",
+  "private": true,
+  "workspaces": ["server", "web"],
+  "scripts": {
+    "dev": "npm-run-all -p dev:server dev:web",
+    "dev:server": "npm -w server run dev",
+    "dev:web": "npm -w web run dev",
+    "build": "npm -w web run build && npm -w server run build",
+    "typecheck": "npm -w server run typecheck && npm -w web run typecheck"
+  },
+  "devDependencies": { "npm-run-all": "^4.1.5" }
+}

@@ -1,0 +1,41 @@
+import { DatabaseSync } from 'node:sqlite';
+import fs from 'node:fs';
+import path from 'node:path';
+import { config } from './config.js';
+
+fs.mkdirSync(config.dataDir, { recursive: true });
+export const db = new DatabaseSync(path.join(config.dataDir, 'exposure.db'));
+
+db.exec(`
+PRAGMA journal_mode = WAL;
+CREATE TABLE IF NOT EXISTS shoots (
+  id TEXT PRIMARY KEY, folder TEXT NOT NULL, title TEXT NOT NULL,
+  date TEXT NOT NULL, camera TEXT, count INTEGER NOT NULL DEFAULT 0, edited INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS photos (
+  id TEXT PRIMARY KEY, shoot_id TEXT NOT NULL REFERENCES shoots(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, taken_at TEXT NOT NULL, camera TEXT, lens TEXT, focal REAL,
+  fnum REAL, shutter TEXT, iso INTEGER, width INTEGER, height INTEGER,
+  has_edit INTEGER NOT NULL, has_raw INTEGER NOT NULL, sig TEXT NOT NULL, hay TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS versions (
+  photo_id TEXT NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
+  key TEXT NOT NULL, label TEXT NOT NULL, fmt TEXT NOT NULL, size INTEGER NOT NULL, file TEXT NOT NULL,
+  PRIMARY KEY (photo_id, key)
+);
+-- Exposure never writes to the photo folders, so user state lives here.
+CREATE TABLE IF NOT EXISTS favorites (photo_id TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS albums (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS album_photos (
+  album_id INTEGER NOT NULL REFERENCES albums(id) ON DELETE CASCADE, photo_id TEXT NOT NULL,
+  PRIMARY KEY (album_id, photo_id)
+);
+-- One row per paired browser/phone/app. Only a hash of the token is stored.
+CREATE TABLE IF NOT EXISTS devices (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
+  created_at INTEGER NOT NULL, last_seen INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS photos_taken ON photos(taken_at DESC);
+CREATE INDEX IF NOT EXISTS photos_shoot ON photos(shoot_id);
+`);
+db.exec('PRAGMA foreign_keys = ON');

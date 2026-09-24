@@ -1,0 +1,11 @@
+node_modules
+dist
+data
+.env
+release
+ios/build
+ios/*.xcodeproj/xcuserdata
+photos
+.DS_Store
+.idea
+ios/Exposure.xcodeproj

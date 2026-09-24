@@ -1,0 +1,42 @@
+name: Exposure
+options:
+  bundleIdPrefix: app.exposure
+  deploymentTarget: { iOS: "18.0" }
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    DEVELOPMENT_TEAM: ""          # set your team to run on a device
+    CODE_SIGN_STYLE: Automatic
+targets:
+  Exposure:
+    type: application
+    platform: iOS
+    sources: [Exposure]
+    info:
+      path: Exposure/Info.plist
+      properties:
+        CFBundleDisplayName: Exposure
+        UILaunchScreen: { UIColorName: "" }
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        UIAppFonts: [Geist-Regular.ttf, Geist-Medium.ttf, Geist-SemiBold.ttf, GeistMono-Regular.ttf]
+        NSCameraUsageDescription: Exposure uses the camera to scan the pairing code shown by your server.
+        NSLocalNetworkUsageDescription: Exposure connects to your photo server on your home network.
+        NSAppTransportSecurity: { NSAllowsLocalNetworking: true, NSAllowsArbitraryLoads: true }
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.exposure.ios
+        TARGETED_DEVICE_FAMILY: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: ""
+  ExposureTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [ExposureTests]
+    settings: { base: { GENERATE_INFOPLIST_FILE: YES } }
+    dependencies: [{ target: Exposure }]
+schemes:
+  Exposure:
+    build: { targets: { Exposure: all, ExposureTests: [test] } }
+    test: { targets: [ExposureTests] }

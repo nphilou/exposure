@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import type { FastifyInstance } from 'fastify';
 import { config } from './config.js';
 import { db } from './db.js';
-import { progress, scan, watch, SHOOT_RE } from './indexer.js';
+import { progress, scan, watch } from './indexer.js';
+import { DATED_RE as SHOOT_RE, KNOWN_EXT, getRules } from './rules.js';
 import { activate, disconnect, getLibrary, saveConnection, type Connection } from './library.js';
 import { DavStorage, LocalStorage, davCandidates, hostGateway, type Storage } from './storage.js';
 import dns from 'node:dns/promises';
@@ -25,6 +26,11 @@ async function folderInfo(storage: Storage, p: string) {
     kids.push(...inner.map(e => `${d.name}/${e.name}`));
   }
   kids = kids.sort((a, b) => b.split('/').pop()!.localeCompare(a.split('/').pop()!));
+  if (!kids.length) {
+    // Not organised by date: it still looks like photos if it holds image files.
+    const files = (await storage.list(p).catch(() => [])).filter(e => !e.isDir && KNOWN_EXT.has(e.name.split('.').pop()!.toLowerCase())).length;
+    if (files) kids = [`${files} ${files === 1 ? 'photo' : 'photos'}${dirs.length ? ` · ${dirs.length} folders` : ''}`];
+  }
   return { looksLikePhotos: kids.length > 0, kids: [...kids.slice(0, 4), ...(kids.length > 4 ? [`and ${kids.length - 4} more`] : [])] };
 }
 
@@ -49,6 +55,7 @@ export function setupRoutes(app: FastifyInstance) {
       localAvailable: !!config.localRoot && fs.existsSync(config.localRoot),
       // Address the container can use to reach the NAS it runs on (for the "This NAS" shortcut).
       nasAddress: hostGateway(),
+      defaultView: getRules().defaultView,
     };
   });
 
@@ -108,7 +115,7 @@ export function setupRoutes(app: FastifyInstance) {
   app.post<{ Body: { pendingId: string; path: string } }>('/api/setup/use', async (req, reply) => {
     const p = pending.get(req.body.pendingId);
     if (!p) return reply.code(410).send({ error: 'Connection expired. Please connect again.' });
-    db.exec('DELETE FROM photos; DELETE FROM shoots;'); await clearThumbs();
+    db.exec('DELETE FROM photos; DELETE FROM shoots; DELETE FROM files;'); await clearThumbs();
     const conn: Connection = { ...p.conn, libraryPath: '/' + req.body.path.replace(/^\/+|\/+$/g, '') };
     activate(saveConnection(conn, p.password));
     pending.delete(req.body.pendingId);

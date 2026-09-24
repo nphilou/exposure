@@ -1,101 +1,178 @@
 import path from 'node:path';
-import crypto from 'node:crypto';
 import exifr from 'exifr';
 import sharp from 'sharp';
 import { EventEmitter } from 'node:events';
-import { RAW_EXT, JPEG_EXT } from './config.js';
 import { db } from './db.js';
 import { getLibrary, type Library } from './library.js';
+import { KNOWN_EXT, RAW_EXT, getRules, group, type FileRow, type GPhoto } from './rules.js';
 
 export const events = new EventEmitter();
-
-// "2016-01-25 Paris - Samsam", "2026-01-01", "2008-05 Allemagne"
-export const SHOOT_RE = /^(\d{4})-(\d{2})(?:-(\d{2}))?(?:\s+(.+))?$/;
 const MONTHS = ['january','february','march','april','may','june','july','august','september','october','november','december'];
 const posix = path.posix;
 
+// `shoots`/`shootsDone` drive the progress bar: folders walked, then photos whose metadata was read.
 export const progress = { phase: 'idle' as 'idle' | 'scanning' | 'done', count: 0, current: '', error: '', shoots: 0, shootsDone: 0 };
 
-interface Found { key: 'edited' | 'camera' | 'raw'; label: string; fmt: string; size: number; file: string; mtime: number }
+const hidden = (n: string) => n.startsWith('.') || n.startsWith('@') || n.startsWith('#') || n === '$RECYCLE.BIN';
+const LIST_CONCURRENCY = 6, META_CONCURRENCY = 8, MAX_DEPTH = 12;
 
-const safeList = async (lib: Library, p: string) => { try { return await lib.storage.list(p); } catch { return []; } };
+/** Walks the whole library and records every image file (path, size, mtime) in `files`. */
+async function walk(lib: Library) {
+  const found: FileRow[] = [];
+  const queue: { dir: string; depth: number }[] = [{ dir: '', depth: 0 }];
+  let active = 0, done = 0;
+  progress.shoots = 1; progress.shootsDone = 0;
+  await new Promise<void>((resolve, reject) => {
+    const pump = () => {
+      if (!queue.length && !active) return resolve();
+      while (active < LIST_CONCURRENCY && queue.length) {
+        const { dir, depth } = queue.shift()!;
+        active++;
+        progress.current = `${lib.base.replace(/\/$/, '')}/${dir}`;
+        lib.storage.list(posix.join(lib.base, dir)).then(entries => {
+          for (const e of entries) {
+            if (hidden(e.name)) continue;
+            const rel = dir ? `${dir}/${e.name}` : e.name;
+            if (e.isDir) { if (depth < MAX_DEPTH) { queue.push({ dir: rel, depth: depth + 1 }); progress.shoots++; } continue; }
+            const ext = posix.extname(e.name).slice(1).toLowerCase();
+            if (KNOWN_EXT.has(ext)) found.push({ path: rel, dir, name: e.name, ext, size: e.size, mtime: Math.round(e.mtime) });
+          }
+          progress.count = found.length;
+        }, err => { if (!dir) reject(err); /* unreadable subfolder: skip it */ })
+          .finally(() => { active--; done++; progress.shootsDone = done; pump(); });
+      }
+    };
+    pump();
+  });
 
-// Subfolders that hold versions of the shoot's photos. Anything else inside a shoot is ignored.
-const SUBDIRS: Record<string, Found['key']> = { export: 'edited', raw: 'raw', jpg: 'camera', jpeg: 'camera' };
+  // Sync the files table: new/changed files lose their cached metadata, vanished files are removed.
+  const prev = new Map((db.prepare('SELECT path, size, mtime FROM files').all() as { path: string; size: number; mtime: number }[]).map(r => [r.path, r]));
+  const upsert = db.prepare(`INSERT INTO files (path, dir, name, ext, size, mtime, meta) VALUES (?,?,?,?,?,?,NULL)
+    ON CONFLICT(path) DO UPDATE SET size=excluded.size, mtime=excluded.mtime, meta=NULL`);
+  const del = db.prepare('DELETE FROM files WHERE path = ?');
+  db.exec('BEGIN');
+  try {
+    for (const f of found) {
+      const p = prev.get(f.path);
+      prev.delete(f.path);
+      if (!p || p.size !== f.size || p.mtime !== f.mtime) upsert.run(f.path, f.dir, f.name, f.ext, f.size, f.mtime);
+    }
+    for (const gone of prev.keys()) del.run(gone);
+    seedMetaFromOldIndex();
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+}
 
 /**
- * Groups a shoot's files into photos. Files belong together when they share a stem, e.g.
- *   DSC01234.ARW + DSC01234.JPG + Export/DSC01234.jpg
- * Lightroom-style exports with a copy suffix pair with their RAW too:
- *   RAW/_DSC9468.ARW + _DSC9468-1.jpg        (the -1 JPEG is the edit)
+ * One-time upgrade from the pre-rules index: its photos already carry EXIF data, so copy it onto the
+ * matching files instead of re-reading ~all photos from the NAS. Old version rows are the ones with mtime 0.
  */
-async function scanShoot(lib: Library, folder: string) {
-  type F = { rel: string; stem: string; ext: string; size: number; mtime: number; dir: Found['key'] | null };
-  const files: F[] = [];
-  const collect = async (sub: string, dir: Found['key'] | null) => {
-    for (const e of await safeList(lib, posix.join(lib.base, folder, sub))) {
-      if (e.isDir) {
-        const k = sub ? undefined : SUBDIRS[e.name.toLowerCase()] ?? (/^export[ _-]/i.test(e.name) ? 'edited' : undefined);
-        if (k) await collect(e.name, k);
-        continue;
-      }
-      const ext = posix.extname(e.name).toLowerCase();
-      if (!JPEG_EXT.has(ext) && !RAW_EXT[ext]) continue;
-      files.push({ rel: sub ? `${sub}/${e.name}` : e.name, stem: posix.parse(e.name).name, ext, size: e.size, mtime: e.mtime, dir });
-    }
-  };
-  await collect('', null);
-
-  const rawStems = new Set(files.filter(f => RAW_EXT[f.ext]).map(f => f.stem.toLowerCase()));
-  const groups = new Map<string, { name: string; versions: Found[] }>();
-  for (const f of files) {
-    let stem = f.stem, key: Found['key'];
-    if (RAW_EXT[f.ext]) key = 'raw';
-    else {
-      const base = /^(.*?)[-_ ]\d{1,2}$/.exec(f.stem)?.[1];
-      if (!rawStems.has(stem.toLowerCase()) && base && rawStems.has(base.toLowerCase())) { stem = base; key = 'edited'; }
-      else key = f.dir === 'edited' ? 'edited' : 'camera';
-    }
-    const g = groups.get(stem.toLowerCase()) ?? { name: stem, versions: [] };
-    const v: Found = { key, size: f.size, file: f.rel, mtime: f.mtime,
-      label: key === 'edited' ? 'Edited' : key === 'raw' ? 'Original' : 'Camera', fmt: key === 'raw' ? RAW_EXT[f.ext] : 'JPEG' };
-    // One version per kind; with several exports of the same photo, keep the most recent.
-    const i = g.versions.findIndex(x => x.key === key);
-    if (i < 0) g.versions.push(v); else if (v.mtime > g.versions[i].mtime) g.versions[i] = v;
-    groups.set(stem.toLowerCase(), g);
+function seedMetaFromOldIndex() {
+  const old = db.prepare(`SELECT v.file, s.folder, p.taken_at, p.camera, p.lens, p.focal, p.fnum, p.shutter, p.iso, p.width, p.height
+    FROM versions v JOIN photos p ON p.id = v.photo_id JOIN shoots s ON s.id = p.shoot_id WHERE v.mtime = 0`).all() as any[];
+  if (!old.length) return;
+  const set = db.prepare('UPDATE files SET meta = ? WHERE path = ? AND meta IS NULL');
+  for (const o of old) {
+    const m: Meta = { taken: o.taken_at, camera: o.camera ?? undefined, lens: o.lens ?? undefined, focal: o.focal ?? undefined, fnum: o.fnum ?? undefined,
+      shutter: o.shutter ?? undefined, iso: o.iso ?? undefined, w: o.width ?? undefined, h: o.height ?? undefined };
+    set.run(JSON.stringify(m), `${o.folder}/${o.file}`);
   }
-  return [...groups.values()];
+  console.log(`[exposure] reused metadata for ${old.length} files from the previous index`);
 }
 
-/** Shoot folders at the top of the library, or one level down (e.g. year folders: 2016/2016-01-25 Paris). */
-export async function findShoots(lib: Library) {
-  const out: { folder: string; name: string }[] = [];
-  for (const e of await lib.storage.list(lib.base)) {
-    if (!e.isDir || e.name.startsWith('@') || e.name.startsWith('#')) continue;
-    if (SHOOT_RE.test(e.name)) { out.push({ folder: e.name, name: e.name }); continue; }
-    for (const c of await safeList(lib, posix.join(lib.base, e.name)))
-      if (c.isDir && SHOOT_RE.test(c.name)) out.push({ folder: `${e.name}/${c.name}`, name: c.name });
-  }
-  return out.sort((a, b) => b.name.localeCompare(a.name));
-}
+interface Meta { taken?: string; camera?: string; lens?: string; focal?: number; fnum?: number; shutter?: string; iso?: number; w?: number; h?: number }
+const fmtShutter = (t?: number) => !t ? undefined : t >= 1 ? `${t}s` : `1/${Math.round(1 / t)}`;
 
 /** EXIF + dimensions from the head of the file only, so remote sources don't download whole photos. */
-export async function readMeta(lib: Library, rel: string, isRaw: boolean) {
+async function readMeta(lib: Library, rel: string, isRaw: boolean): Promise<Meta> {
   try {
     const buf = await lib.storage.read(posix.join(lib.base, rel), isRaw ? 1_000_000 : 400_000);
-    const x: any = (await exifr.parse(buf, ['Make', 'Model', 'LensModel', 'FocalLength', 'FNumber', 'ExposureTime', 'ISO', 'DateTimeOriginal', 'ExifImageWidth', 'ExifImageHeight'])) ?? {};
+    const x: any = (await exifr.parse(buf, ['Make', 'Model', 'LensModel', 'FocalLength', 'FNumber', 'ExposureTime', 'ISO', 'DateTimeOriginal', 'ExifImageWidth', 'ExifImageHeight']).catch(() => null)) ?? {};
     if (!x.ExifImageWidth && !isRaw) {
       const m = await sharp(buf).metadata().catch(() => null);
       if (m?.width && m?.height) { const rot = (m.orientation ?? 1) >= 5; x.ExifImageWidth = rot ? m.height : m.width; x.ExifImageHeight = rot ? m.width : m.height; }
     }
-    return x;
+    return {
+      taken: x.DateTimeOriginal instanceof Date && !isNaN(+x.DateTimeOriginal) ? x.DateTimeOriginal.toISOString() : undefined,
+      camera: x.Model ? String(x.Model) : undefined, lens: x.LensModel ?? undefined, focal: x.FocalLength ?? undefined,
+      fnum: x.FNumber ?? undefined, shutter: fmtShutter(x.ExposureTime), iso: x.ISO ?? undefined, w: x.ExifImageWidth ?? undefined, h: x.ExifImageHeight ?? undefined,
+    };
   } catch { return {}; }
 }
 
-const fmtShutter = (t?: number) => !t ? null : t >= 1 ? `${t}s` : `1/${Math.round(1 / t)}`;
-const ORDER = { edited: 0, camera: 1, raw: 2 } as const;
+/** The file we read EXIF from: a JPEG/TIFF if there is one (cheaper and usually complete), else the RAW. */
+const metaSource = (p: GPhoto) => p.versions.find(v => v.role === 'camera') ?? p.versions.find(v => v.role !== 'raw') ?? p.versions[0];
 
-const META_CONCURRENCY = 8;
+let regrouping: Promise<void> | null = null, again = false;
+/** Rebuilds photos/versions/shoots from `files` using the current rules. Cheap: no directory listing. */
+export function regroup(): Promise<void> {
+  if (regrouping) { again = true; return regrouping; }
+  return regrouping = (async () => {
+    try { do { again = false; await regroupOnce(); } while (again); }
+    finally { regrouping = null; }
+  })();
+}
+
+async function regroupOnce() {
+  const lib = getLibrary();
+  if (!lib) return;
+  const t0 = Date.now();
+  const rules = getRules();
+  const files = db.prepare('SELECT path, dir, name, ext, size, mtime FROM files').all() as unknown as FileRow[];
+  const photos = group(files, rules, posix.basename(lib.base) || lib.conn.name);
+
+  // Read metadata for photos that don't have it yet (new files, or a different source after a rule change).
+  const metas = new Map<string, Meta>();
+  for (const r of db.prepare('SELECT path, meta FROM files WHERE meta IS NOT NULL').all() as { path: string; meta: string }[]) metas.set(r.path, JSON.parse(r.meta));
+  const todo = [...new Set(photos.map(p => metaSource(p).file).filter(f => !metas.has(f)))];
+  if (todo.length) {
+    Object.assign(progress, { phase: 'scanning', shoots: todo.length, shootsDone: 0, current: 'Reading photo details…' });
+    const save = db.prepare('UPDATE files SET meta = ? WHERE path = ?');
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(META_CONCURRENCY, todo.length) }, async () => {
+      while (next < todo.length) {
+        const f = todo[next++];
+        const m = await readMeta(lib, f, !!RAW_EXT[posix.extname(f).slice(1).toLowerCase()]);
+        metas.set(f, m); save.run(JSON.stringify(m), f);
+        progress.shootsDone++;
+      }
+    }));
+  }
+
+  // Write everything in one transaction; favorites and albums reference photo ids, which are stable.
+  const events = new Map<string, { id: string; folder: string; title: string; date: string | null; first: string; camera: string | null; count: number; edited: number }>();
+  const insPhoto = db.prepare(`INSERT INTO photos (id, shoot_id, name, taken_at, camera, lens, focal, fnum, shutter, iso, width, height, has_edit, has_raw, sig, hay)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'',?)`);
+  const insVersion = db.prepare('INSERT INTO versions (photo_id, key, label, fmt, size, file, mtime) VALUES (?,?,?,?,?,?,?)');
+  const insShoot = db.prepare('INSERT INTO shoots (id, folder, title, date, camera, count, edited) VALUES (?,?,?,?,?,?,?)');
+  const rows: { p: GPhoto; m: Meta; taken: string; hasEdit: boolean; hay: string }[] = [];
+  const seen = new Set<string>();
+  for (const p of photos) {
+    if (seen.has(p.id)) continue; seen.add(p.id);
+    const m = metas.get(metaSource(p).file) ?? {};
+    const taken = m.taken ?? (p.event.date ? `${p.event.date}T12:00:00.000Z` : new Date(Math.max(...p.versions.map(v => v.mtime))).toISOString());
+    const hasEdit = p.versions.some(v => v.role === 'edited');
+    const [y, mo] = taken.split('-');
+    const hay = [p.event.title, p.dir.replace(/\//g, ' '), m.camera, m.lens, m.focal && `${Math.round(m.focal)}mm`, MONTHS[+mo - 1], y, p.name, hasEdit ? 'edited' : '']
+      .filter(Boolean).join(' ').toLowerCase();
+    rows.push({ p, m, taken, hasEdit, hay });
+    const e = events.get(p.event.id) ?? events.set(p.event.id, { ...p.event, first: taken, camera: null, count: 0, edited: 0 }).get(p.event.id)!;
+    e.count++; if (hasEdit) e.edited++; if (taken < e.first) e.first = taken; e.camera ??= m.camera ?? null;
+  }
+  db.exec('BEGIN');
+  try {
+    db.exec('DELETE FROM versions; DELETE FROM photos; DELETE FROM shoots;');
+    for (const e of events.values()) insShoot.run(e.id, e.folder, e.title, e.date ?? e.first.slice(0, 10), e.camera, e.count, e.edited);
+    for (const { p, m, taken, hasEdit, hay } of rows) {
+      insPhoto.run(p.id, p.event.id, p.name, taken, m.camera ?? null, m.lens ?? null, m.focal ?? null, m.fnum ?? null, m.shutter ?? null, m.iso ?? null,
+        m.w ?? null, m.h ?? null, hasEdit ? 1 : 0, p.versions.some(v => v.role === 'raw') ? 1 : 0, hay);
+      for (const v of p.versions) insVersion.run(p.id, v.role, v.label, v.fmt, v.size, v.file, v.mtime);
+    }
+    db.exec('COMMIT');
+  } catch (err) { db.exec('ROLLBACK'); throw err; }
+  console.log(`[exposure] grouped ${files.length} files into ${photos.length} photos in ${Date.now() - t0}ms`);
+}
+
 let running = false;
 export async function scan() {
   const lib = getLibrary();
@@ -104,80 +181,21 @@ export async function scan() {
   Object.assign(progress, { phase: 'scanning', count: 0, current: '', error: '', shoots: 0, shootsDone: 0 });
   const t0 = Date.now();
   try {
-    const seen = new Set<string>(), shootIds = new Set<string>();
-    const found = await findShoots(lib);
-    progress.shoots = found.length;
-    for (const sh of found) {
-      const [, y, mo, d = '01', title = sh.name] = SHOOT_RE.exec(sh.name)!;
-      const e = { name: sh.folder };
-      const shootId = crypto.createHash('sha1').update(sh.folder).digest('hex').slice(0, 12);
-      shootIds.add(shootId);
-      progress.current = `${lib.base.replace(/\/$/, '')}/${e.name}`;
-      const groups = await scanShoot(lib, e.name);
-      let camera: string | null = null;
-
-      db.prepare(`INSERT INTO shoots (id, folder, title, date) VALUES (?,?,?,?)
-                  ON CONFLICT(id) DO UPDATE SET folder=excluded.folder, title=excluded.title, date=excluded.date`)
-        .run(shootId, e.name, title, `${y}-${mo}-${d}`);
-
-      // Work out which photos changed, then read their EXIF in parallel (network round trips dominate on a NAS).
-      const todo: { g: typeof groups[number]; id: string; sig: string; src: Found }[] = [];
-      for (const g of groups) {
-        g.versions.sort((a, b) => ORDER[a.key] - ORDER[b.key]);
-        const id = crypto.createHash('sha1').update(`${e.name}/${g.name.toLowerCase()}`).digest('hex').slice(0, 16);
-        seen.add(id);
-        progress.count++;
-        const sig = g.versions.map(v => `${v.file}:${v.size}:${v.mtime}`).join('|');
-        const prev = db.prepare('SELECT sig, camera FROM photos WHERE id = ?').get(id) as { sig: string; camera: string | null } | undefined;
-        if (prev?.sig === sig) { camera ??= prev.camera; continue; } // unchanged: skip EXIF
-        todo.push({ g, id, sig, src: g.versions.find(v => v.key !== 'raw') ?? g.versions[0] });
-      }
-      const metas: any[] = new Array(todo.length);
-      let next = 0;
-      await Promise.all(Array.from({ length: Math.min(META_CONCURRENCY, todo.length) }, async () => {
-        while (next < todo.length) { const i = next++; metas[i] = await readMeta(lib, `${e.name}/${todo[i].src.file}`, todo[i].src.key === 'raw'); }
-      }));
-
-      db.exec('BEGIN'); // one commit per shoot instead of one per statement
-      try {
-        todo.forEach(({ g, id, sig }, i) => {
-          const x = metas[i];
-          const taken = x.DateTimeOriginal instanceof Date ? x.DateTimeOriginal.toISOString() : `${y}-${mo}-${d}T12:00:00.000Z`;
-          const cam = x.Model ? String(x.Model) : null;
-          camera ??= cam;
-          const hasEdit = g.versions.some(v => v.key === 'edited') ? 1 : 0;
-          const hay = [title, cam, x.LensModel, x.FocalLength && `${Math.round(x.FocalLength)}mm`, MONTHS[+mo - 1], y, g.name, hasEdit ? 'edited' : '']
-            .filter(Boolean).join(' ').toLowerCase();
-
-          db.prepare(`INSERT INTO photos (id, shoot_id, name, taken_at, camera, lens, focal, fnum, shutter, iso, width, height, has_edit, has_raw, sig, hay)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            ON CONFLICT(id) DO UPDATE SET taken_at=excluded.taken_at, camera=excluded.camera, lens=excluded.lens, focal=excluded.focal,
-              fnum=excluded.fnum, shutter=excluded.shutter, iso=excluded.iso, width=excluded.width, height=excluded.height,
-              has_edit=excluded.has_edit, has_raw=excluded.has_raw, sig=excluded.sig, hay=excluded.hay`)
-            .run(id, shootId, g.name, taken, cam, x.LensModel ?? null, x.FocalLength ?? null, x.FNumber ?? null, fmtShutter(x.ExposureTime),
-              x.ISO ?? null, x.ExifImageWidth ?? null, x.ExifImageHeight ?? null, hasEdit, g.versions.some(v => v.key === 'raw') ? 1 : 0, sig, hay);
-          db.prepare('DELETE FROM versions WHERE photo_id = ?').run(id);
-          for (const v of g.versions)
-            db.prepare('INSERT INTO versions (photo_id, key, label, fmt, size, file) VALUES (?,?,?,?,?,?)').run(id, v.key, v.label, v.fmt, v.size, v.file);
-        });
-        db.exec('COMMIT');
-      } catch (err) { db.exec('ROLLBACK'); throw err; }
-      db.prepare(`UPDATE shoots SET camera = COALESCE(?, camera),
-          count = (SELECT COUNT(*) FROM photos WHERE shoot_id = shoots.id),
-          edited = (SELECT COUNT(*) FROM photos WHERE shoot_id = shoots.id AND has_edit = 1) WHERE id = ?`).run(camera, shootId);
-      progress.shootsDone++;
-    }
-    for (const { id } of db.prepare('SELECT id FROM photos').all() as { id: string }[])
-      if (!seen.has(id)) db.prepare('DELETE FROM photos WHERE id = ?').run(id);
-    for (const { id } of db.prepare('SELECT id FROM shoots').all() as { id: string }[])
-      if (!shootIds.has(id)) db.prepare('DELETE FROM shoots WHERE id = ?').run(id);
+    await walk(lib);
+    await regroup();
     progress.phase = 'done';
     events.emit('indexed', { ms: Date.now() - t0 });
-    console.log(`[exposure] indexed ${seen.size} photos in ${Date.now() - t0}ms`);
+    console.log(`[exposure] indexed library in ${Date.now() - t0}ms`);
   } catch (err) {
     progress.phase = 'idle'; progress.error = (err as Error).message;
     console.error('[exposure] scan failed:', err);
   } finally { running = false; }
+}
+
+/** After a rules change: regroup from the files table and tell clients. */
+export async function applyRules() {
+  await regroup();
+  events.emit('indexed', { rules: true });
 }
 
 let watcher: { close(): Promise<void> } | undefined, poll: NodeJS.Timeout | undefined;
@@ -189,7 +207,7 @@ export async function watch() {
   if (lib.storage.localPath) {
     const { default: chokidar } = await import('chokidar');
     let timer: NodeJS.Timeout | undefined;
-    watcher = chokidar.watch(lib.storage.localPath(lib.base), { ignoreInitial: true, depth: 4, awaitWriteFinish: { stabilityThreshold: 2000 }, usePolling: process.env.EXPOSURE_POLL === '1', interval: 30_000, binaryInterval: 30_000 })
+    watcher = chokidar.watch(lib.storage.localPath(lib.base), { ignoreInitial: true, depth: MAX_DEPTH, awaitWriteFinish: { stabilityThreshold: 2000 }, usePolling: process.env.EXPOSURE_POLL === '1', interval: 30_000, binaryInterval: 30_000 })
       .on('all', () => { clearTimeout(timer); timer = setTimeout(() => void scan(), 3000); });
   } else {
     poll = setInterval(() => void scan(), 10 * 60_000);

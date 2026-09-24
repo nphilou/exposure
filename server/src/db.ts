@@ -36,8 +36,19 @@ CREATE TABLE IF NOT EXISTS devices (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
   created_at INTEGER NOT NULL, last_seen INTEGER NOT NULL
 );
+-- Every image file in the library with its metadata. Photos/versions/shoots are derived from this
+-- table by the library rules, so changing a rule regroups without rescanning the NAS.
+CREATE TABLE IF NOT EXISTS files (
+  path TEXT PRIMARY KEY, dir TEXT NOT NULL, name TEXT NOT NULL, ext TEXT NOT NULL,
+  size INTEGER NOT NULL, mtime INTEGER NOT NULL, meta TEXT
+);
+CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS photos_taken ON photos(taken_at DESC);
 CREATE INDEX IF NOT EXISTS photos_shoot ON photos(shoot_id);
 CREATE INDEX IF NOT EXISTS photos_shoot_cover ON photos(shoot_id, has_edit DESC, taken_at);
 `);
 db.exec('PRAGMA foreign_keys = ON');
+
+// Additive migrations for databases created by older versions.
+const cols = (t: string) => (db.prepare(`PRAGMA table_info(${t})`).all() as { name: string }[]).map(c => c.name);
+if (!cols('versions').includes('mtime')) db.exec('ALTER TABLE versions ADD COLUMN mtime INTEGER NOT NULL DEFAULT 0');

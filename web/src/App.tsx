@@ -5,6 +5,7 @@ import { Grid } from './Grid';
 import { Viewer } from './Viewer';
 import { Onboarding } from './Onboarding';
 import { Claim, Pair, Devices } from './Pairing';
+import { LibraryRules } from './Rules';
 
 export function App() {
   const { view, setView, q, setQuery, stats, albums, photos, shoots, loading, session, openId, refresh, boot, setup, onboarding, startOver } = useStore();
@@ -51,16 +52,17 @@ export function App() {
             <dl className="kv" style={{ gridTemplateColumns: '120px 1fr' }}>
               <dt>Storage</dt><dd>{setup?.connection?.name}{setup?.connection?.host ? ` · ${setup.connection.host}` : ' · mounted folder'}</dd>
               <dt>Library folder</dt><dd className="mono">{setup?.connection?.libraryPath}</dd>
-              <dt>Library</dt><dd>{stats?.photos} photos · {stats?.shoots} shoots · {stats?.cameras} cameras</dd>
+              <dt>Library</dt><dd>{stats?.photos} photos · {stats?.shoots} events · {stats?.cameras} cameras</dd>
             </dl>
             <div style={{ display: 'flex', gap: 10 }}>
               <button className="btn ghost" onClick={() => void api.rescan()}>Rescan now</button>
               <button className="btn ghost" onClick={() => { if (confirm('Disconnect and choose a different library? Your favorites and albums are kept.')) void startOver(); }}>Change library…</button>
             </div>
+            <LibraryRules />
             <Devices />
           </div></div>
         ) : loading ? null : photos.length === 0
-          ? <div className="empty">{q || view.kind !== 'all' ? 'No photos match.' : shoots.length ? 'Nothing here yet.' : 'No photos yet. Exposure is watching your photo folder — new shoots will appear here automatically.'}</div>
+          ? <div className="empty">{q || view.kind !== 'all' ? 'No photos match.' : shoots.length ? 'Nothing here yet.' : 'No photos yet. Exposure is watching your photo folder — new photos will appear here automatically.'}</div>
           : <Grid photos={photos} />}
       </main>
       {openId && <Viewer />}

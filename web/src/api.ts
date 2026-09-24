@@ -8,8 +8,23 @@ export interface Shoot { id: string; folder: string; title: string; date: string
 export interface Album { id: number; title: string; count: number }
 export interface Stats { photos: number; shoots: number; cameras: number; edited: number }
 
+export type Role = 'edited' | 'camera' | 'raw';
+export interface Rules {
+  folders: { name: string; role: Role }[]; editSuffix: boolean; pairSameName: boolean; preferred: Role[];
+  datedFolders: boolean; onlyDated: boolean; exclude: string[]; types: string[]; defaultView: 'all' | 'edited';
+}
+export interface Suggestion { id: string; text: string; count: number; apply: Partial<Rules> }
+export interface RulesSummary { files: number; photos: number; edited: number; events: number; skipped?: number }
+export interface RulesPreview { summary: RulesSummary & { skipped: number }; folders: string[]; folder: string;
+  sample: { name: string; versions: { role: Role; label: string; file: string }[] }[] }
+/** Applies a suggestion on top of rules; folder rules are merged rather than replaced. */
+export const mergeRules = (r: Rules, apply: Partial<Rules>): Rules => ({
+  ...r, ...apply,
+  folders: [...r.folders, ...(apply.folders ?? []).filter(f => !r.folders.some(x => x.name.toLowerCase() === f.name.toLowerCase()))],
+});
+
 export interface SetupState {
-  configured: boolean; localAvailable: boolean; nasAddress: string | null;
+  configured: boolean; localAvailable: boolean; nasAddress: string | null; defaultView?: 'all' | 'edited';
   connection: { name: string; kind: 'local' | 'webdav'; libraryPath: string; host: string | null } | null;
 }
 export interface Session { claimed: boolean; authenticated: boolean; device: { id: string; name: string } | null; publicUrl: string | null }
@@ -48,6 +63,9 @@ export const api = {
   reset: () => j('/api/setup/reset', post({})),
   rescan: () => j('/api/rescan', post({})),
   stats: () => j<Stats>('/api/stats'),
+  rules: () => j<{ rules: Rules; presets: { generic: Rules; photographer: Rules }; suggestions: Suggestion[]; summary: RulesSummary }>('/api/rules'),
+  saveRules: (r: Rules) => j<{ rules: Rules }>('/api/rules', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(r) }),
+  previewRules: (rules: Rules, folder?: string) => j<RulesPreview>('/api/rules/preview', post({ rules, folder })),
   shoots: () => j<Shoot[]>('/api/shoots'),
   albums: () => j<Album[]>('/api/albums'),
   photos: (p: Record<string, string | undefined>) =>

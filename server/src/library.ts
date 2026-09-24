@@ -36,5 +36,5 @@ export function saveConnection(c: Connection, plainPassword?: string) {
 export function disconnect() {
   current = null;
   fs.rmSync(file, { force: true });
-  db.exec('DELETE FROM photos; DELETE FROM shoots;'); // favorites/albums are kept and re-attach if the same folders return
+  db.exec('DELETE FROM photos; DELETE FROM shoots; DELETE FROM files;'); // favorites/albums are kept and re-attach if the same folders return
 }

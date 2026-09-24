@@ -25,7 +25,7 @@ export const useStore = create<State>((set, get) => ({
       set({ session });
       if (!session.authenticated) { set({ loading: false }); return; }
       const setup = await api.setupState();
-      set({ setup, onboarding: !setup.configured });
+      set({ setup, onboarding: !setup.configured, ...(setup.defaultView === 'edited' ? { view: { kind: 'edited' } as View } : {}) });
       if (setup.configured) await get().refresh(); else set({ loading: false });
     } catch (e) { set({ loading: false }); if (e instanceof AuthError) await get().boot(); }
   },

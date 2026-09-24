@@ -37,13 +37,25 @@ Plain `http://` works on your home network. iOS and installable web apps need HT
 
 ## How it maps the folder
 
+Out of the box Exposure is a plain photo gallery: every JPEG, PNG, TIFF, WebP and RAW file under the
+library folder is shown, dated from its EXIF data. Files with the same name in a folder (`DSC1.ARW` +
+`DSC1.JPG`) are one photo with two versions, and a folder named like `2016-01-25 Paris` becomes an event.
+
+Everything beyond that is a **library rule** you can see and change in Settings → Library rules, with a
+live preview of how a real folder is grouped:
+
 ```
-/Images/2026-09-22 Akita Show/DSC01234.ARW      → "Original" (RAW: ARW RAF CR3 NEF DNG)
-                              DSC01234.JPG      → "Camera"
-                              Export/DSC01234.jpg → "Edited"   (preferred version)
+Files in folders named  Export*  → Edited      /Images/2023-08-30 Pass/DSC01.ARW       Original
+Files in folders named  RAW      → Original    /Images/2023-08-30 Pass/DSC01.JPG       Camera
+DSC1-1.jpg next to DSC1.ARW      → Edited      /Images/2023-08-30 Pass/Export/DSC01.jpg Edited  ← shown
 ```
-Files with the same name become one photo. Exposure never writes to the folder; favorites, albums
-and paired devices live in its own SQLite DB (`/data/exposure.db`).
+The grid shows each photo's first available version in a preferred order (Edited → Camera → Original
+by default), and the library can open on "Edited only". After the first scan, Exposure suggests rules
+that match your folders ("337 folders are named Export. Show their photos as the edited version?").
+Changing a rule regroups the library in seconds without rescanning the NAS.
+
+Exposure never writes to the folder; favorites, albums, rules and paired devices live in its own SQLite
+DB (`/data/exposure.db`).
 
 ## Other ways to connect
 Instead of mounting a folder you can point Exposure at a NAS over **WebDAV** (must be enabled on the NAS)

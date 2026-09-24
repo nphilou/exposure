@@ -13,9 +13,3 @@ export const config = {
   resetAuth: process.env.EXPOSURE_RESET_AUTH === '1',
   webDir: process.env.EXPOSURE_WEB_DIR ? abs(process.env.EXPOSURE_WEB_DIR) : '',
 };
-
-export const RAW_EXT: Record<string, string> = {
-  '.arw': 'Sony RAW', '.raf': 'Fujifilm RAW', '.cr3': 'Canon RAW',
-  '.nef': 'Nikon RAW', '.dng': 'DNG',
-};
-export const JPEG_EXT = new Set(['.jpg', '.jpeg']);

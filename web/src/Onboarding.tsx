@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, ApiError, type FolderHere, type FolderRow, type Progress, type SetupState } from './api';
+import { api, ApiError, mergeRules, type Rules, type Suggestion, type FolderHere, type FolderRow, type Progress, type SetupState } from './api';
 import { useStore } from './store';
 
 type Step = 'welcome' | 'source' | 'connect' | 'folder' | 'analyze';
@@ -187,7 +187,7 @@ function Analyze({ onDone, onRetry }: { onDone: () => void; onRetry: () => void 
     <div className="ob-page" style={{ maxWidth: 620 }}>
       {!done && !p?.error && <>
         <h1>Reading your library…</h1>
-        <p className="lead">Looking at folder names and pairing up files. This can take a few minutes for a large library.</p>
+        <p className="lead">Finding your photos and reading their details. This can take a few minutes for a large library.</p>
         <div className="ob-count">{(p?.count ?? 0).toLocaleString('en-US')}</div>
         <div className="muted">photos found</div>
         <div className="ob-bar"><div style={{ width: `${(pct * 100).toFixed(1)}%` }} /></div>
@@ -196,24 +196,45 @@ function Analyze({ onDone, onRetry }: { onDone: () => void; onRetry: () => void 
       {p?.error && <><h1>Something went wrong</h1><p className="ob-err">{p.error}</p><button className="btn big" onClick={onRetry}>Choose another folder</button></>}
       {done && p && p.photos === 0 && <>
         <h1>No photos found there</h1>
-        <p className="lead">Exposure looks for folders named like <span className="mono">2026-09-22 Akita Show</span> that hold your photos. Try a different folder.</p>
+        <p className="lead">There are no JPEG, PNG, TIFF or RAW files in that folder or its subfolders. Try a different folder.</p>
         <button className="btn big" onClick={onRetry}>Choose another folder</button>
       </>}
       {done && p && p.photos > 0 && <>
         <h1>We found your library.</h1>
         <div className="ob-stats">
           <div><b>{p.photos.toLocaleString('en-US')}</b><span>photos</span></div>
-          <div><b>{p.shootsFound}</b><span>shoots</span></div>
+          <div><b>{p.shootsFound}</b><span>{p.shootsFound === 1 ? 'folder' : 'folders'}</span></div>
           {p.cameras > 0 && <div><b>{p.cameras}</b><span>{p.cameras === 1 ? 'camera' : 'cameras'}</span></div>}
         </div>
-        <div className="ob-demo">
-          <div className="mono"><span>DSC01234.ARW</span><span>DSC01234.JPG</span><span>Export/DSC01234.jpg</span></div>
-          <div className="muted">→</div>
-          <div><div className="ob-tile" /><div className="muted small">1 photo · 3 versions</div></div>
-        </div>
-        <p className="lead" style={{ marginTop: 28 }}>RAW and camera JPEG files with the same name are shown as one photo. Folders named “Export” are shown as your edited photos.</p>
+        <Suggestions />
         <button className="btn big" onClick={onDone}>Open my library</button>
       </>}
+    </div>
+  );
+}
+
+/** "We noticed 337 folders named Export…" — each Yes becomes a visible rule in Settings → Library rules. */
+function Suggestions() {
+  const [rules, setRules] = useState<Rules | null>(null);
+  const [list, setList] = useState<Suggestion[]>([]);
+  const [applied, setApplied] = useState<string[]>([]);
+  useEffect(() => { void api.rules().then(r => { setRules(r.rules); setList(r.suggestions); }).catch(() => {}); }, []);
+  const yes = async (s: Suggestion) => {
+    if (!rules) return;
+    const next = mergeRules(rules, s.apply);
+    setRules(next); setApplied(a => [...a, s.id]);
+    await api.saveRules(next).catch(() => {});
+  };
+  return (
+    <div style={{ marginTop: 28 }}>
+      {list.length > 0 && <>
+        <p className="lead" style={{ marginBottom: 12 }}>We noticed a few things about how your photos are organised:</p>
+        <div className="rules-sugg" style={{ marginBottom: 20 }}>
+          {list.map(s => <div key={s.id}><span>{s.text}</span>
+            {applied.includes(s.id) ? <span style={{ flex: 'none' }} className="muted">✓ Done</span> : <button className="btn ghost sm" onClick={() => void yes(s)}>Yes</button>}</div>)}
+        </div>
+      </>}
+      <p className="lead">You can change how files are grouped at any time in Settings → Library rules.</p>
     </div>
   );
 }

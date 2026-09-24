@@ -28,10 +28,12 @@ async function build(key: string, storage: Storage, rel: string, width: number, 
       if (!buf) return null;
       input = Buffer.from(buf);
     } else input = storage.localPath ? storage.localPath(rel) : await storage.read(rel);
-    await sharp(input).rotate().resize({ width, withoutEnlargement: true }).jpeg({ quality: 80 }) // no mozjpeg: several times slower on NAS CPUs for ~5% smaller files.toFile(tmp);
+    // No mozjpeg: several times slower on NAS CPUs for ~5% smaller files.
+    await sharp(input).rotate().resize({ width, withoutEnlargement: true }).jpeg({ quality: 80 }).toFile(tmp);
     await fs.rename(tmp, out); // atomic: readers never see a half-written thumbnail
     return out;
   } catch (err) {
+    await fs.rm(tmp, { force: true });
     console.warn('[exposure] thumb failed', rel, (err as Error).message);
     return null;
   }

@@ -12,6 +12,10 @@ final class ServerStore {
     var favs: [String: Bool] = [:]      // optimistic overrides, keyed by photo id
     var libraryVersion = 0              // bumped when the server re-indexes
     var unreachable = false
+    /// Library rules → "Open the library on": "all" or "edited". Cached so launch starts on the right filter.
+    var defaultView: String = UserDefaults.standard.string(forKey: "defaultView") ?? "all" {
+        didSet { UserDefaults.standard.set(defaultView, forKey: "defaultView") }
+    }
 
     var api: APIClient? { server.map { APIClient(base: $0, token: token) } }
     var isPaired: Bool { server != nil && token != nil }
@@ -47,6 +51,11 @@ final class ServerStore {
         }
     }
 
+    private struct SetupState: Decodable { let defaultView: String? }
+    func loadSettings() async {
+        if let s: SetupState = try? await call({ try await $0.get("/api/setup/state") }), let v = s.defaultView { defaultView = v }
+    }
+
     func loadCollections() async {
         async let s = try? call { try await $0.shoots() }
         async let a = try? call { try await $0.albums() }
@@ -70,6 +79,7 @@ final class ServerStore {
                 for try await line in bytes.lines where line.hasPrefix("event: indexed") {
                     libraryVersion += 1
                     await loadCollections()
+                    await loadSettings()
                 }
             } catch {}
             try? await Task.sleep(for: .seconds(10))

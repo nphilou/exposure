@@ -2,6 +2,19 @@
 
 Browse the photos on your NAS from any browser or phone, without uploading them anywhere.
 
+## Screenshots
+
+| Choose your library | Suggested rules | Library |
+|---|---|---|
+| ![Choose folder](docs/screenshots/web/05-choose-folder.png) | ![Found library](docs/screenshots/web/06-found-library.png) | ![Library](docs/screenshots/web/08-library.png) |
+
+| Photos | Shoots | Viewer | Info |
+|---|---|---|---|
+| ![Photos](docs/screenshots/ios/02-photos.png) | ![Shoots](docs/screenshots/ios/03-shoots.png) | ![Viewer](docs/screenshots/ios/06-viewer.png) | ![Info](docs/screenshots/ios/07-info.png) |
+
+The full setup flow is in [`docs/screenshots/web`](docs/screenshots/web) and the iPhone app in
+[`docs/screenshots/ios`](docs/screenshots/ios) (demo library with placeholder images).
+
 ## Set up (3 steps)
 
 1. **Run it on your NAS** (image: `ghcr.io/nphilou/exposure`, amd64 + arm64):

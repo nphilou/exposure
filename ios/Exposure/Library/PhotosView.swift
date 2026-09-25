@@ -4,7 +4,8 @@ struct PhotosView: View {
     @Environment(ServerStore.self) private var store
     @Environment(Router.self) private var router
     enum Filter: Hashable { case all, edited, originals }
-    @State private var filter: Filter = .all
+    @State private var filter: Filter = UserDefaults.standard.string(forKey: "defaultView") == "edited" ? .edited : .all
+    @State private var touched = false   // once the user picks a filter, the server default no longer overrides it
     @State private var feed = PhotoFeed()
 
     private var query: APIClient.PhotoQuery { var q = APIClient.PhotoQuery(); q.edited = filter == .edited; return q }
@@ -35,6 +36,9 @@ struct PhotosView: View {
         .toolbar(.hidden, for: .navigationBar)
         .background(Theme.bg)
         .task(id: "\(filter)-\(store.libraryVersion)") { await reload() }
+        .task { await store.loadSettings() }
+        .onChange(of: store.defaultView) { _, v in if !touched { filter = v == "edited" ? .edited : .all } }
+        .onChange(of: filter) { _, new in if new != (store.defaultView == "edited" ? .edited : .all) { touched = true } }
     }
 
     private func reload() async { await feed.load(query, store: store) }

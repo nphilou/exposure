@@ -42,11 +42,10 @@ const setCookie = (req: FastifyRequest, reply: FastifyReply, token: string) =>
   reply.setCookie(COOKIE, token, { httpOnly: true, sameSite: 'lax', path: '/', secure: req.protocol === 'https', maxAge: 60 * 60 * 24 * 365 * 2 });
 
 export interface Device { id: string; name: string }
+const bearerOf = (req: FastifyRequest) => /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1];
+const find = (t?: string) => t ? db.prepare('SELECT id, name, last_seen FROM devices WHERE token_hash = ?').get(sha(t)) as (Device & { last_seen: number }) | undefined : undefined;
 export function authenticate(req: FastifyRequest): Device | null {
-  const bearer = /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1];
-  const token = bearer ?? req.cookies?.[COOKIE];
-  if (!token) return null;
-  const d = db.prepare('SELECT id, name, last_seen FROM devices WHERE token_hash = ?').get(sha(token)) as (Device & { last_seen: number }) | undefined;
+  const d = find(bearerOf(req)) ?? find(req.cookies?.[COOKIE]);
   if (!d) return null;
   if (Date.now() - d.last_seen > 3600_000) db.prepare('UPDATE devices SET last_seen = ? WHERE id = ?').run(Date.now(), d.id);
   return { id: d.id, name: d.name };
@@ -71,8 +70,12 @@ export function authRoutes(app: FastifyInstance) {
     if (!authenticate(req)) return reply.code(401).send({ error: 'auth' });
   });
 
-  app.get('/api/session', async req => {
+  app.get('/api/session', async (req, reply) => {
     const d = authenticate(req);
+    // Browsers share cookies across every port of a host, so another app on the NAS (its admin UI) can
+    // wipe ours. The web app keeps a copy of its token and sends it here; put the cookie back from it.
+    const bearer = bearerOf(req);
+    if (bearer && req.cookies?.[COOKIE] !== bearer && find(bearer)) setCookie(req, reply, bearer);
     return { claimed: isClaimed(), authenticated: !!d, device: d, publicUrl: config.publicUrl || null };
   });
 

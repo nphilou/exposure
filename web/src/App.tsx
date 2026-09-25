@@ -10,13 +10,15 @@ import { LibraryRules } from './Rules';
 export function App() {
   const { view, setView, q, setQuery, stats, albums, photos, shoots, loading, session, openId, refresh, boot, setup, onboarding, startOver } = useStore();
 
+  useEffect(() => { void boot(); }, [boot]);
+  // Live updates when the server finishes re-indexing new photos (needs the device cookie).
+  const authed = !!session?.authenticated;
   useEffect(() => {
-    void boot();
-    // Live updates when the server finishes re-indexing new photos.
+    if (!authed) return;
     const es = new EventSource('/api/events');
     es.addEventListener('indexed', () => void refresh());
     return () => es.close();
-  }, [boot, refresh]);
+  }, [authed, refresh]);
 
   if (!session) return null;
   if (!session.claimed) return <Claim />;

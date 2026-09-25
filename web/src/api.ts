@@ -35,8 +35,18 @@ export interface Progress { phase: 'idle' | 'scanning' | 'done'; count: number; 
 export class ApiError extends Error { details?: string[] }
 export class AuthError extends Error {}
 
-async function j<T>(url: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(url, init);
+// Backup of the device cookie. localStorage is per host:port, so other apps on the NAS can't clear it.
+const TOKEN = 'exposure_device';
+export const savedToken = {
+  get: () => { try { return localStorage.getItem(TOKEN); } catch { return null; } },
+  set: (t: string) => { try { localStorage.setItem(TOKEN, t); } catch { /* private mode */ } },
+  clear: () => { try { localStorage.removeItem(TOKEN); } catch { /* private mode */ } },
+};
+const keep = (r: { token: string }) => { savedToken.set(r.token); return r; };
+
+async function j<T>(url: string, init: RequestInit = {}): Promise<T> {
+  const t = savedToken.get();
+  const r = await fetch(url, t ? { ...init, headers: { ...init.headers as Record<string, string>, authorization: `Bearer ${t}` } } : init);
   if (r.status === 401) throw new AuthError();
   if (!r.ok) {
     const body = (await r.json().catch(() => null)) as any;
@@ -49,9 +59,14 @@ async function j<T>(url: string, init?: RequestInit): Promise<T> {
 const post = (body: unknown): RequestInit => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
 export const api = {
-  session: () => j<Session>('/api/session'),
-  claim: (code: string, name: string) => j('/api/claim', post({ code, name })),
-  redeem: (code: string, name: string) => j('/api/pair/redeem', post({ code, name })),
+  async session() {
+    const t = savedToken.get();
+    const s = await j<Session>('/api/session');
+    if (t && s.claimed && !s.authenticated) savedToken.clear(); // revoked, or the server was reset
+    return s;
+  },
+  claim: (code: string, name: string) => j<{ token: string }>('/api/claim', post({ code, name })).then(keep),
+  redeem: (code: string, name: string) => j<{ token: string }>('/api/pair/redeem', post({ code, name })).then(keep),
   pairNew: () => j<{ code: string; expiresAt: number; path: string; lanUrls: string[] }>('/api/pair/new', post({})),
   devices: () => j<Device[]>('/api/devices'),
   revoke: (id: string) => j(`/api/devices/${id}`, { method: 'DELETE' }),

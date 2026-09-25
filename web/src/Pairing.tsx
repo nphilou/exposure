@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
-import { api, type Device } from './api';
+import { api, savedToken, type Device } from './api';
 import { useStore } from './store';
 
 export function deviceName() {
@@ -92,7 +92,7 @@ export function Devices() {
   };
   const revoke = async (d: Device) => {
     if (!confirm(d.current ? 'Remove this device? You will need a new pairing code to come back.' : `Remove “${d.name}”?`)) return;
-    try { await api.revoke(d.id); if (d.current) location.reload(); else void load(); } catch (e) { setErr((e as Error).message); }
+    try { await api.revoke(d.id); if (d.current) { savedToken.clear(); location.reload(); } else void load(); } catch (e) { setErr((e as Error).message); }
   };
   const ago = (t: number) => { const m = Math.round((Date.now() - t) / 60000); return m < 2 ? 'just now' : m < 90 ? `${m} min ago` : m < 2880 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`; };
 

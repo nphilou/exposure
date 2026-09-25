@@ -42,7 +42,8 @@ export const useStore = create<State>((set, get) => ({
       // Ignore stale responses if the user changed the view/query meanwhile.
       if (get().view === view && get().q === q) set({ photos, shoots, albums, stats, loading: false, hasMore: photos.length === PAGE, loadingMore: false });
     } catch (e) {
-      if (e instanceof AuthError) set({ session: { claimed: true, authenticated: false, device: null, publicUrl: null }, loading: false }); else set({ loading: false });
+      // Re-check the session rather than assume we're logged out: it can restore a cleared cookie.
+      if (e instanceof AuthError) await get().boot(); else set({ loading: false });
     }
   },
   async loadMore() {

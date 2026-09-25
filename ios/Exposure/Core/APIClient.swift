@@ -100,4 +100,7 @@ struct APIClient: Sendable {
     func previewURL(_ id: String, version: Version.Key? = nil) -> URL {
         url("/api/photos/\(id)/preview", ["v": version?.rawValue])
     }
+    func originalURL(_ id: String, version: Version.Key? = nil) -> URL {
+        url("/api/photos/\(id)/original", ["v": version?.rawValue])
+    }
 }

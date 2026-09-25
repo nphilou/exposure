@@ -43,7 +43,7 @@ extension Array where Element == Photo {
         var out: [PhotoSection] = []
         var cur: [Photo] = []
         var key = ""
-        let cal = Calendar.current
+        var cal = Calendar(identifier: .gregorian); cal.timeZone = .gmt
         func flush() {
             guard let p = cur.first else { return }
             out.append(PhotoSection(id: key, title: Fmt.dayMonth.string(from: p.takenAt), sub: p.shootTitle, photos: cur))

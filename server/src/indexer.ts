@@ -83,17 +83,27 @@ function seedMetaFromOldIndex() {
 interface Meta { taken?: string; camera?: string; lens?: string; focal?: number; fnum?: number; shutter?: string; iso?: number; w?: number; h?: number }
 const fmtShutter = (t?: number) => !t ? undefined : t >= 1 ? `${t}s` : `1/${Math.round(1 / t)}`;
 
+/** EXIF times carry no timezone: keep the camera's wall-clock time as-is, labelled "Z" and displayed as UTC by every client. */
+function wallClock(v: unknown): string | undefined {
+  const m = typeof v === 'string' && /^(\d{4})[:-](\d{2})[:-](\d{2})[T ](\d{2}):(\d{2}):(\d{2})/.exec(v);
+  if (!m) return undefined;
+  const iso = `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}.000Z`;
+  return isNaN(Date.parse(iso)) ? undefined : iso;
+}
+
 /** EXIF + dimensions from the head of the file only, so remote sources don't download whole photos. */
 async function readMeta(lib: Library, rel: string, isRaw: boolean): Promise<Meta> {
   try {
     const buf = await lib.storage.read(posix.join(lib.base, rel), isRaw ? 1_000_000 : 400_000);
-    const x: any = (await exifr.parse(buf, ['Make', 'Model', 'LensModel', 'FocalLength', 'FNumber', 'ExposureTime', 'ISO', 'DateTimeOriginal', 'ExifImageWidth', 'ExifImageHeight']).catch(() => null)) ?? {};
+    // reviveValues:false keeps DateTimeOriginal as the raw "YYYY:MM:DD HH:MM:SS" string; reviving it would
+    // interpret the camera's wall-clock time in the *server's* timezone.
+    const x: any = (await exifr.parse(buf, { pick: ['Make', 'Model', 'LensModel', 'FocalLength', 'FNumber', 'ExposureTime', 'ISO', 'DateTimeOriginal', 'ExifImageWidth', 'ExifImageHeight'], reviveValues: false }).catch(() => null)) ?? {};
     if (!x.ExifImageWidth && !isRaw) {
       const m = await sharp(buf).metadata().catch(() => null);
       if (m?.width && m?.height) { const rot = (m.orientation ?? 1) >= 5; x.ExifImageWidth = rot ? m.height : m.width; x.ExifImageHeight = rot ? m.width : m.height; }
     }
     return {
-      taken: x.DateTimeOriginal instanceof Date && !isNaN(+x.DateTimeOriginal) ? x.DateTimeOriginal.toISOString() : undefined,
+      taken: wallClock(x.DateTimeOriginal),
       camera: x.Model ? String(x.Model) : undefined, lens: x.LensModel ?? undefined, focal: x.FocalLength ?? undefined,
       fnum: x.FNumber ?? undefined, shutter: fmtShutter(x.ExposureTime), iso: x.ISO ?? undefined, w: x.ExifImageWidth ?? undefined, h: x.ExifImageHeight ?? undefined,
     };

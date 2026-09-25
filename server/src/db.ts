@@ -52,3 +52,10 @@ db.exec('PRAGMA foreign_keys = ON');
 // Additive migrations for databases created by older versions.
 const cols = (t: string) => (db.prepare(`PRAGMA table_info(${t})`).all() as { name: string }[]).map(c => c.name);
 if (!cols('versions').includes('mtime')) db.exec('ALTER TABLE versions ADD COLUMN mtime INTEGER NOT NULL DEFAULT 0');
+
+// v1: capture times used to be read in the server's timezone. Drop cached metadata so the next index
+// re-reads every photo's EXIF and stores the camera's wall-clock time instead.
+const version = (db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
+if (version < 1) {
+  db.exec('UPDATE files SET meta = NULL; PRAGMA user_version = 1');
+}

@@ -78,13 +78,13 @@ struct ViewerView: View {
         .scrollTargetBehavior(.paging)
         .scrollPosition(id: $currentID)
         .scrollIndicators(.hidden)
-        .scrollDisabled(zoomed || sheet)
+        .scrollDisabled(zoomed || sheet || axis == .vertical)
     }
 
     private func page(_ p: Photo) -> some View {
         let v = versions[p.id]
         let api = store.api!
-        return ZoomableImage(url: api.previewURL(p.id, version: v), placeholder: api.thumbURL(p.id, width: 400, version: v),
+        return ZoomableImage(url: api.previewURL(p.id, version: v), original: api.originalURL(p.id, version: v), placeholder: api.thumbURL(p.id, width: 400, version: v),
                              token: store.token,
                              onTap: { if sheet { sheet = false } else if picker { picker = false } else { chrome.toggle() } },
                              onZoomChange: { zoomed = $0 })
@@ -93,9 +93,9 @@ struct ViewerView: View {
     // MARK: gestures (vertical only; horizontal paging is the scroll view)
 
     private var verticalDrag: some Gesture {
-        DragGesture(minimumDistance: 12)
+        DragGesture(minimumDistance: 6)
             .onChanged { g in
-                if axis == nil { axis = abs(g.translation.height) > abs(g.translation.width) ? .vertical : .horizontal }
+                if axis == nil { axis = abs(g.translation.height) > abs(g.translation.width) * 0.6 ? .vertical : .horizontal }
                 guard axis == .vertical, !zoomed else { return }
                 picker = false
                 dragY = g.translation.height

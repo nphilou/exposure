@@ -135,6 +135,19 @@ export async function build() {
   };
   app.get('/api/photos/:id/thumb', image(q => Math.min(Number(q.w ?? 480), 1200)));
   app.get('/api/photos/:id/preview', image(() => 2400));
+  // Full resolution for pinch-zoom: JPEG/PNG originals are streamed untouched, anything else (HEIC, TIFF, RAW) is rendered at full size.
+  app.get<{ Params: { id: string }; Querystring: { v?: string } }>('/api/photos/:id/original', async (req, reply) => {
+    const lib = getLibrary(), v = versionRow(req.params.id, req.query.v);
+    if (!lib || !v) return reply.code(404).send();
+    const file = path.posix.join(lib.base, rel(v));
+    const ext = path.posix.extname(file).toLowerCase();
+    const cache = 'private, max-age=31536000, immutable';
+    if (ext === '.jpg' || ext === '.jpeg' || ext === '.png')
+      return reply.header('cache-control', cache).type(ext === '.png' ? 'image/png' : 'image/jpeg').send(await lib.storage.stream(file));
+    const out = await render(`${v.photo_id}-${v.key}-${(v.size + v.mtime).toString(36)}`, lib.storage, file, 100_000, v.key === 'raw');
+    if (!out) return reply.code(404).send();
+    return reply.header('cache-control', cache).type('image/jpeg').send(fsSync.createReadStream(out));
+  });
   app.get<{ Params: { id: string }; Querystring: { v?: string } }>('/api/photos/:id/file', async (req, reply) => {
     const lib = getLibrary(), v = versionRow(req.params.id, req.query.v);
     if (!lib || !v) return reply.code(404).send();

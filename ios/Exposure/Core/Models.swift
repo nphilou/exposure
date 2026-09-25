@@ -64,9 +64,9 @@ enum Fmt {
     static let isoDay: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; f.locale = Locale(identifier: "en_US_POSIX"); f.timeZone = .gmt; return f
     }()
-    static let longDate: DateFormatter = { let f = DateFormatter(); f.setLocalizedDateFormatFromTemplate("d MMMM yyyy"); return f }()
-    static let dayMonth: DateFormatter = { let f = DateFormatter(); f.setLocalizedDateFormatFromTemplate("d MMMM"); return f }()
-    static let weekday: DateFormatter = { let f = DateFormatter(); f.setLocalizedDateFormatFromTemplate("EEEE d MMMM yyyy"); return f }()
-    static let time: DateFormatter = { let f = DateFormatter(); f.timeStyle = .short; return f }()
+    static let longDate: DateFormatter = { let f = DateFormatter(); f.setLocalizedDateFormatFromTemplate("d MMMM yyyy"); f.timeZone = .gmt; return f }()
+    static let dayMonth: DateFormatter = { let f = DateFormatter(); f.setLocalizedDateFormatFromTemplate("d MMMM"); f.timeZone = .gmt; return f }()
+    static let weekday: DateFormatter = { let f = DateFormatter(); f.setLocalizedDateFormatFromTemplate("EEEE d MMMM yyyy"); f.timeZone = .gmt; return f }()
+    static let time: DateFormatter = { let f = DateFormatter(); f.timeStyle = .short; f.timeZone = .gmt; return f }()
     static func photos(_ n: Int) -> String { "\(n) \(n == 1 ? "photo" : "photos")" }
 }

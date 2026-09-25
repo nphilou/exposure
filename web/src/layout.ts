@@ -12,7 +12,7 @@ export function layout(photos: Photo[], width: number, target: number): Item[] {
   let i = 0;
   while (i < photos.length) {
     const p0 = photos[i];
-    const head = { title: p0.shootTitle, sub: new Date(p0.takenAt).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' }) };
+    const head = { title: p0.shootTitle, sub: new Date(p0.takenAt).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }) };
     const group: Photo[] = [];
     while (i < photos.length && photos[i].shootId === p0.shootId) group.push(photos[i++]);
     items.push({ type: 'header', ...head, height: 64 });

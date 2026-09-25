@@ -1,14 +1,14 @@
 name: Exposure
 options:
-  bundleIdPrefix: app.exposure
+  bundleIdPrefix: ch.exposureapp
   deploymentTarget: { iOS: "18.0" }
   createIntermediateGroups: true
 settings:
   base:
     SWIFT_VERSION: "5.0"
     MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: "1"
-    DEVELOPMENT_TEAM: ""          # set your team to run on a device
+    CURRENT_PROJECT_VERSION: "2"
+    DEVELOPMENT_TEAM: BLTNY4Q9KU
     CODE_SIGN_STYLE: Automatic
 targets:
   Exposure:
@@ -27,9 +27,9 @@ targets:
         NSAppTransportSecurity: { NSAllowsLocalNetworking: true, NSAllowsArbitraryLoads: true }
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: app.exposure.ios
+        PRODUCT_BUNDLE_IDENTIFIER: ch.exposureapp
         TARGETED_DEVICE_FAMILY: "1"
-        ASSETCATALOG_COMPILER_APPICON_NAME: ""
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
   ExposureTests:
     type: bundle.unit-test
     platform: iOS

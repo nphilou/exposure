@@ -9,3 +9,5 @@ photos
 .DS_Store
 .idea
 ios/Exposure.xcodeproj
+
+AuthKey_*.p8

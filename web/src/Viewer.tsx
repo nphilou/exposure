@@ -40,7 +40,7 @@ export function Viewer() {
           {p.versions.map(v => <button key={v.key} className={cur === v.key ? 'on' : ''} onClick={() => setVer(v.key)}>{v.label}</button>)}
         </div>
         <dl className="kv">
-          <dt>Taken</dt><dd>{new Date(p.takenAt).toLocaleString()}</dd>
+          <dt>Taken</dt><dd>{new Date(p.takenAt).toLocaleString(undefined, { timeZone: 'UTC' })}</dd>
           {exif.filter(Boolean).length > 0 && <><dt>Camera</dt><dd>{exif.filter(Boolean).join(' · ')}</dd></>}
           {p.versions.map(v => <><dt key={v.key + 'k'}>{v.label}</dt><dd key={v.key}>{v.fmt} · {fmtSize(v.size)}</dd></>)}
         </dl>

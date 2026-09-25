@@ -213,7 +213,7 @@ function Analyze({ onDone, onRetry }: { onDone: () => void; onRetry: () => void 
   );
 }
 
-/** "We noticed 337 folders named Export…" — each Yes becomes a visible rule in Settings → Library rules. */
+/** "We noticed 337 folders named Export…" — each Yes becomes a visible rule in Settings → Library. */
 function Suggestions() {
   const [rules, setRules] = useState<Rules | null>(null);
   const [list, setList] = useState<Suggestion[]>([]);
@@ -234,7 +234,7 @@ function Suggestions() {
             {applied.includes(s.id) ? <span style={{ flex: 'none' }} className="muted">✓ Done</span> : <button className="btn ghost sm" onClick={() => void yes(s)}>Yes</button>}</div>)}
         </div>
       </>}
-      <p className="lead">You can change how files are grouped at any time in Settings → Library rules.</p>
+      <p className="lead">You can change how files are grouped at any time in Settings → Library.</p>
     </div>
   );
 }

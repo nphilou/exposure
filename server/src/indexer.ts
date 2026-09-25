@@ -4,7 +4,7 @@ import sharp from 'sharp';
 import { EventEmitter } from 'node:events';
 import { db } from './db.js';
 import { getLibrary, type Library } from './library.js';
-import { KNOWN_EXT, RAW_EXT, getRules, group, type FileRow, type GPhoto } from './rules.js';
+import { KNOWN_EXT, RAW_EXT, getRules, group, isEdited, type FileRow, type GPhoto } from './rules.js';
 
 export const events = new EventEmitter();
 const MONTHS = ['january','february','march','april','may','june','july','august','september','october','november','december'];
@@ -161,7 +161,7 @@ async function regroupOnce() {
     if (seen.has(p.id)) continue; seen.add(p.id);
     const m = metas.get(metaSource(p).file) ?? {};
     const taken = m.taken ?? (p.event.date ? `${p.event.date}T12:00:00.000Z` : new Date(Math.max(...p.versions.map(v => v.mtime))).toISOString());
-    const hasEdit = p.versions.some(v => v.role === 'edited');
+    const hasEdit = isEdited(p, rules, f => metas.get(f)?.camera);
     const [y, mo] = taken.split('-');
     const hay = [p.event.title, p.dir.replace(/\//g, ' '), m.camera, m.lens, m.focal && `${Math.round(m.focal)}mm`, MONTHS[+mo - 1], y, p.name, hasEdit ? 'edited' : '']
       .filter(Boolean).join(' ').toLowerCase();

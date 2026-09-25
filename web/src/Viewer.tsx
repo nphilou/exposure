@@ -4,6 +4,14 @@ import { useStore } from './store';
 
 const fmtSize = (b: number) => (b / 1e6).toFixed(1) + ' MB';
 
+// The image box fills the stage (object-fit: contain), so a click can land on the letterbox around the picture.
+const onPicture = (e: React.MouseEvent<HTMLImageElement>) => {
+  const img = e.currentTarget, r = img.getBoundingClientRect();
+  const k = Math.min(r.width / img.naturalWidth, r.height / img.naturalHeight);
+  return Math.abs(e.clientX - r.left - r.width / 2) <= img.naturalWidth * k / 2
+    && Math.abs(e.clientY - r.top - r.height / 2) <= img.naturalHeight * k / 2;
+};
+
 export function Viewer() {
   const { photos, openId, open, toggleFav, loadMore } = useStore();
   const idx = photos.findIndex(p => p.id === openId);
@@ -29,7 +37,7 @@ export function Viewer() {
   return (
     <div className="viewer">
       <div className="stage" onClick={() => open(null)}>
-        <img src={api.preview(p.id, cur)} alt={p.name} onClick={e => e.stopPropagation()} />
+        <img src={api.preview(p.id, cur)} alt={p.name} onClick={e => { if (onPicture(e)) e.stopPropagation(); }} />
       </div>
       <aside className="info">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>

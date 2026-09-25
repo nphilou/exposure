@@ -57,7 +57,17 @@ struct Album: Codable, Identifiable, Hashable, Sendable {
 }
 
 struct Suggestion: Codable, Hashable, Sendable { let label: String; let kind: String }
-struct Session: Codable, Sendable { let claimed: Bool; let authenticated: Bool }
+struct AlbumShare: Codable, Identifiable, Hashable, Sendable {
+    let id: String
+    let name: String
+    let allowOriginals: Bool
+    let createdAt: Double
+    let expiresAt: Double?
+    let lastSeen: Double?
+}
+struct CreatedShare: Codable, Sendable { let id: String; let path: String }
+
+struct Session: Codable, Sendable { let claimed: Bool; let authenticated: Bool; let publicUrl: String? }
 struct TokenResponse: Codable, Sendable { let token: String }
 
 enum Fmt {

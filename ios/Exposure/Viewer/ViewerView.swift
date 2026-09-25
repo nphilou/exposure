@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// Full-screen viewer from the mobile design: swipe ←/→ between photos, ↑ for info, ↓ to close,
-/// double-tap / pinch to zoom, tap to hide controls, and a version picker.
+/// double-tap / pinch to zoom, tap to hide controls. Chrome follows Photos: glass buttons, a thumbnail strip
+/// to scrub through the photos, share on the left and favorite / add to album in the middle.
 struct ViewerView: View {
     @Environment(ServerStore.self) private var store
     @Environment(\.dismiss) private var dismiss
@@ -11,7 +12,9 @@ struct ViewerView: View {
     @State private var versions: [String: Version.Key] = [:]
     @State private var chrome = true
     @State private var sheet = false
-    @State private var picker = false
+    @State private var addingToAlbum: Photo?
+    @State private var stripID: String?
+    @State private var stripScrolling = false
     @State private var zoomed = false
     @State private var dragY: CGFloat = 0
     @State private var axis: Axis?
@@ -37,10 +40,10 @@ struct ViewerView: View {
                 VStack(spacing: 0) {
                     topBar(p)
                     Spacer()
-                    if picker { pickerCard(p).transition(.move(edge: .bottom).combined(with: .opacity)) }
-                    versionPill(p)
+                    strip
+                    bottomBar(p)
                 }
-                .opacity(chromeOn || picker ? 1 : 0).allowsHitTesting(chromeOn || picker)
+                .opacity(chromeOn ? 1 : 0).allowsHitTesting(chromeOn)
 
                 InfoSheet(photo: p, current: versions[p.id] ?? p.best, select: { select($0, for: p) })
                     .frame(height: 520)
@@ -53,15 +56,23 @@ struct ViewerView: View {
         .animation(axis == nil ? .spring(response: 0.32, dampingFraction: 0.86) : nil, value: dragY)
         .animation(.easeInOut(duration: 0.2), value: chromeOn)
         .simultaneousGesture(verticalDrag, including: zoomed ? .subviews : .all)
+        .sharingStatus()
         .statusBarHidden(!chromeOn)
         .preferredColorScheme(.dark)
+        .sheet(item: $addingToAlbum) { AddToAlbumSheet(photo: $0) }
         .onAppear {
             currentID = context.start
+            stripID = context.start
             #if DEBUG
             if DebugHooks.open == "info" { DispatchQueue.main.asyncAfter(deadline: .now() + 1) { sheet = true } }
             #endif
         }
-        .onChange(of: currentID) { picker = false; zoomed = false }
+        .onChange(of: currentID) {
+            zoomed = false
+            if !stripScrolling, stripID != currentID { withAnimation(.snappy) { stripID = currentID } }
+        }
+        // Scrubbing the strip pages the viewer; programmatic strip moves (from paging) don't feed back.
+        .onChange(of: stripID) { if stripScrolling, let id = stripID, id != currentID { currentID = id } }
     }
 
     // MARK: pager
@@ -81,13 +92,18 @@ struct ViewerView: View {
         .scrollDisabled(zoomed || sheet || axis == .vertical)
     }
 
+    @ViewBuilder
     private func page(_ p: Photo) -> some View {
         let v = versions[p.id]
-        let api = store.api!
-        return ZoomableImage(url: api.previewURL(p.id, version: v), original: api.originalURL(p.id, version: v), placeholder: api.thumbURL(p.id, width: 400, version: v),
-                             token: store.token,
-                             onTap: { if sheet { sheet = false } else if picker { picker = false } else { chrome.toggle() } },
-                             onZoomChange: { zoomed = $0 })
+        // `api` goes nil if the device is unpaired (e.g. revoked on the server) while the viewer is still up.
+        if let api = store.api {
+            ZoomableImage(url: api.previewURL(p.id, version: v), original: api.originalURL(p.id, version: v), placeholder: api.thumbURL(p.id, width: 400, version: v),
+                          token: store.token,
+                          onTap: { if sheet { sheet = false } else { chrome.toggle() } },
+                          onZoomChange: { zoomed = $0 })
+        } else {
+            Color.black
+        }
     }
 
     // MARK: gestures (vertical only; horizontal paging is the scroll view)
@@ -97,7 +113,6 @@ struct ViewerView: View {
             .onChanged { g in
                 if axis == nil { axis = abs(g.translation.height) > abs(g.translation.width) * 0.6 ? .vertical : .horizontal }
                 guard axis == .vertical, !zoomed else { return }
-                picker = false
                 dragY = g.translation.height
             }
             .onEnded { g in
@@ -113,73 +128,112 @@ struct ViewerView: View {
 
     private func select(_ key: Version.Key, for p: Photo) {
         versions[p.id] = key
-        picker = false
     }
 
     // MARK: chrome
 
+    // Every button label sets a contentShape: with .plain buttons only the glyph is tappable otherwise,
+    // and taps just outside the thin chevron fall through to the photo (which toggles the chrome).
     private func topBar(_ p: Photo) -> some View {
-        HStack(alignment: .top) {
+        HStack {
             Button { dismiss() } label: {
-                Image(systemName: "chevron.left").font(.system(size: 20, weight: .medium)).frame(width: 44, height: 44)
+                Image(systemName: "chevron.left").font(.system(size: 19, weight: .semibold)).frame(width: 48, height: 48).contentShape(Circle())
             }
-            Spacer()
-            VStack(spacing: 2) {
-                Text(p.shootTitle).font(.geist(15, .semibold))
-                Text("\(Fmt.longDate.string(from: p.takenAt)) · \(Fmt.time.string(from: p.takenAt))")
-                    .font(.geist(12)).foregroundStyle(.white.opacity(0.6))
+            .glass(Circle())
+            Spacer(minLength: 12)
+            VStack(spacing: 1) {
+                Text(p.shootTitle).font(.geist(15, .semibold)).lineLimit(1)
+                Text("\(Fmt.longDate.string(from: p.takenAt))  \(Fmt.time.string(from: p.takenAt))").font(.geist(12)).foregroundStyle(.white.opacity(0.75))
             }
-            .padding(.top, 4)
-            Spacer()
-            Button { store.toggleFav(p) } label: {
-                Image(systemName: store.isFav(p) ? "heart.fill" : "heart").font(.system(size: 20)).frame(width: 44, height: 44)
+            .padding(.horizontal, 22).frame(height: 48)
+            .glass(Capsule())
+            Spacer(minLength: 12)
+            Menu {
+                if p.versions.count > 1 {
+                    Picker("Version", selection: Binding(get: { versions[p.id] ?? p.best ?? p.versions[0].key }, set: { select($0, for: p) })) {
+                        ForEach(p.versions, id: \.key) { v in Text("\(v.label) · \(v.fmt)").tag(v.key) }
+                    }
+                }
+                Button("Info", systemImage: "info.circle") { sheet = true }
+            } label: {
+                Image(systemName: "ellipsis").font(.system(size: 19, weight: .semibold)).frame(width: 48, height: 48).contentShape(Circle())
+            }
+            .glass(Circle())
+        }
+        .foregroundStyle(.white).buttonStyle(.plain)
+        .padding(.horizontal, 16)
+    }
+
+    /// Thumbnail strip: the current photo shows at its own shape with room around it, the others as narrow crops.
+    private var strip: some View {
+        GeometryReader { geo in ScrollViewReader { proxy in
+            ScrollView(.horizontal) {
+                LazyHStack(spacing: 2) {
+                    ForEach(photos) { p in
+                        let on = p.id == currentID
+                        Color.clear
+                            .frame(width: on ? min(max(36 * p.ar, 26), 60) : 22, height: 36)
+                            .overlay { if let api = store.api { AuthImage(url: api.thumbURL(p.id, width: 120, version: versions[p.id])) } else { Theme.skel } }
+                            .clipShape(RoundedRectangle(cornerRadius: 2))
+                            .padding(.horizontal, on ? 10 : 0)
+                            .contentShape(Rectangle())
+                            .onTapGesture { withAnimation(.snappy) { currentID = p.id } }
+                            .id(p.id)
+                    }
+                }
+                .scrollTargetLayout()
+            }
+            .contentMargins(.horizontal, geo.size.width / 2, for: .scrollContent)
+            .scrollPosition(id: $stripID, anchor: .center)
+            .scrollTargetBehavior(.viewAligned)
+            .scrollIndicators(.hidden)
+            .onScrollPhaseChange { _, phase in
+                stripScrolling = phase == .interacting || phase == .decelerating
+                // The current thumbnail widens after snapping; re-centre it once the strip settles.
+                if phase == .idle, let id = currentID { withAnimation(.snappy) { proxy.scrollTo(id, anchor: .center) } }
+            }
+            .animation(.snappy(duration: 0.2), value: currentID)
+        } }
+        .frame(height: 36)
+        .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.06),
+                                     .init(color: .black, location: 0.94), .init(color: .clear, location: 1)], startPoint: .leading, endPoint: .trailing))
+        .padding(.bottom, 22)
+    }
+
+    private func bottomBar(_ p: Photo) -> some View {
+        ZStack {
+            HStack(spacing: 0) {
+                Button { store.toggleFav(p) } label: {
+                    Image(systemName: store.isFav(p) ? "heart.fill" : "heart").font(.system(size: 21)).frame(width: 60, height: 52).contentShape(Rectangle())
+                        .contentTransition(.symbolEffect(.replace))
+                }
+                Button { addingToAlbum = p } label: {
+                    Image(systemName: "rectangle.stack.badge.plus").font(.system(size: 20)).frame(width: 60, height: 52).contentShape(Rectangle())
+                }
+            }
+            .padding(.horizontal, 6)
+            .glass(Capsule())
+            HStack {
+                Button { Sharer.shared.share([p], version: versions[p.id] ?? p.best, store: store) } label: {
+                    Image(systemName: "square.and.arrow.up").font(.system(size: 20)).offset(y: -1).frame(width: 52, height: 52).contentShape(Circle())
+                }
+                .disabled(Sharer.shared.busy)
+                .glass(Circle())
+                Spacer()
             }
         }
         .foregroundStyle(.white).buttonStyle(.plain)
-        .padding(.horizontal, 10)
-        .padding(.bottom, 30)
-        .background(LinearGradient(colors: [.black.opacity(0.5), .clear], startPoint: .top, endPoint: .bottom).ignoresSafeArea())
+        .padding(.horizontal, 24).padding(.bottom, 4)
     }
+}
 
-    private func versionPill(_ p: Photo) -> some View {
-        let cur = p.version(versions[p.id])
-        return Button { withAnimation(.snappy) { picker.toggle() } } label: {
-            HStack(spacing: 8) {
-                Text(cur?.label ?? "")
-                Text("· \(p.versions.count) version\(p.versions.count == 1 ? "" : "s")").foregroundStyle(.white.opacity(0.5))
-            }
-            .font(.geist(14)).foregroundStyle(.white)
-            .padding(.horizontal, 16).frame(height: 40)
-            .background(.ultraThinMaterial, in: Capsule())
-            .overlay(Capsule().stroke(.white.opacity(0.14)))
+private extension View {
+    /// Liquid Glass on iOS 26, a material bubble before.
+    @ViewBuilder func glass<S: Shape>(_ shape: S) -> some View {
+        if #available(iOS 26, *) {
+            glassEffect(.regular.interactive(), in: shape)
+        } else {
+            background(.ultraThinMaterial, in: shape).overlay(shape.stroke(.white.opacity(0.12)))
         }
-        .buttonStyle(.plain)
-        .padding(.bottom, 20)
-    }
-
-    private func pickerCard(_ p: Photo) -> some View {
-        let cur = versions[p.id] ?? p.best
-        return VStack(alignment: .leading, spacing: 0) {
-            Text("Versions").font(.geist(12)).foregroundStyle(Theme.viewerTx.opacity(0.5)).padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 6)
-            ForEach(p.versions, id: \.key) { v in
-                Button { select(v.key, for: p) } label: {
-                    HStack(spacing: 12) {
-                        Circle().fill(Theme.viewerTx).frame(width: 7, height: 7).opacity(v.key == cur ? 1 : 0).frame(width: 10)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(v.label).font(.geist(16))
-                            Text("\(v.fmt) · \(v.sizeLabel)").font(.geist(12)).foregroundStyle(Theme.viewerTx.opacity(0.5))
-                        }
-                        Spacer()
-                    }
-                    .padding(12).contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .foregroundStyle(Theme.viewerTx)
-        .padding(8)
-        .background(RoundedRectangle(cornerRadius: 18).fill(Color(white: 0.14).opacity(0.96)))
-        .overlay(RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(0.08)))
-        .padding(.horizontal, 10).padding(.bottom, 12)
     }
 }

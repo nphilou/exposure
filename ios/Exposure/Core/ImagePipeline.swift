@@ -40,7 +40,9 @@ struct AuthImage: View {
 
     var body: some View {
         ZStack {
-            if let image {
+            // Check the cache while rendering too: .task runs after the first frame, so cells scrolled or
+            // zoomed into view would otherwise flash the skeleton for a frame even when their image is ready.
+            if let image = ImagePipeline.shared.cached(url) ?? image {
                 Image(uiImage: image).resizable().aspectRatio(contentMode: contentMode)
             } else {
                 Theme.skel

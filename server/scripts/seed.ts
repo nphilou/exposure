@@ -3,6 +3,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
+import { fakeRaw } from './fakeraw.js';
 
 const out = path.resolve(process.env.INIT_CWD ?? '.', process.argv[2] ?? './photos');
 const shoots: [string, string, number, number][] = [
@@ -25,9 +26,14 @@ for (const [date, title, hue, count] of shoots) {
       <defs><pattern id="p" width="28" height="28" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
       <rect width="14" height="28" fill="hsl(${hh} ${c}% ${l}%)"/><rect x="14" width="14" height="28" fill="hsl(${hh} ${c}% ${l - 5}%)"/></pattern></defs>
       <rect width="100%" height="100%" fill="url(#p)"/><text x="30" y="${h - 30}" font-family="sans-serif" font-size="42" fill="white" opacity=".7">${name}</text></svg>`);
-    await sharp(svg(25)).jpeg({ quality: 88 }).toFile(path.join(dir, `${name}.JPG`));
+    const camera = await sharp(svg(25)).jpeg({ quality: 88 }).toBuffer();
+    const rawOnly = rnd() < 0.12;   // shot RAW only: the library shows the preview embedded in the RAW
+    if (!rawOnly) await fs.writeFile(path.join(dir, `${name}.JPG`), camera);
     if (rnd() < 0.35) await sharp(svg(55)).jpeg({ quality: 90 }).toFile(path.join(dir, 'Export', `${name}.jpg`));
-    if (rnd() < 0.9) await fs.writeFile(path.join(dir, `${name}.ARW`), Buffer.alloc(1024)); // stand-in RAW
+    if (rawOnly || rnd() < 0.9) {   // stand-in RAW: real container layout, embedded preview + 160 px thumbnail
+      const thumb = await sharp(camera).resize(160).jpeg({ quality: 70 }).toBuffer();
+      await fs.writeFile(path.join(dir, `${name}.ARW`), fakeRaw('arw', camera, thumb));
+    }
   }
 }
 console.log('seeded', out);

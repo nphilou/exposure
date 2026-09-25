@@ -4,7 +4,8 @@ import type { FastifyInstance } from 'fastify';
 import { config } from './config.js';
 import { db } from './db.js';
 import { progress, scan, watch } from './indexer.js';
-import { DATED_RE as SHOOT_RE, KNOWN_EXT, getRules } from './rules.js';
+import { KNOWN_EXT, getRules } from './rules.js';
+import { looksDated } from './patterns.js';
 import { activate, disconnect, getLibrary, saveConnection, type Connection } from './library.js';
 import { DavStorage, LocalStorage, davCandidates, hostGateway, type Storage } from './storage.js';
 import dns from 'node:dns/promises';
@@ -19,10 +20,10 @@ const hidden = (n: string) => n.startsWith('@') || n.startsWith('#') || n.starts
 
 async function folderInfo(storage: Storage, p: string) {
   const dirs = (await storage.list(p).catch(() => [])).filter(e => e.isDir && !hidden(e.name));
-  let kids = dirs.filter(e => SHOOT_RE.test(e.name)).map(e => e.name);
+  let kids = dirs.filter(e => looksDated(e.name)).map(e => e.name);
   // Shoots grouped in year folders: Images/2016/2016-01-25 Paris
-  for (const d of dirs.filter(d => /^\d{4}/.test(d.name) && !SHOOT_RE.test(d.name)).slice(0, 40)) {
-      const inner = (await storage.list(`${p.replace(/\/$/, '')}/${d.name}`).catch(() => [])).filter(e => e.isDir && SHOOT_RE.test(e.name));
+  for (const d of dirs.filter(d => /^\d{4}/.test(d.name) && !looksDated(d.name)).slice(0, 40)) {
+      const inner = (await storage.list(`${p.replace(/\/$/, '')}/${d.name}`).catch(() => [])).filter(e => e.isDir && looksDated(e.name));
     kids.push(...inner.map(e => `${d.name}/${e.name}`));
   }
   kids = kids.sort((a, b) => b.split('/').pop()!.localeCompare(a.split('/').pop()!));

@@ -31,12 +31,16 @@ struct MainTabs: View {
                 SearchView().transition(.opacity).zIndex(2)
             }
         }
+        .sharingStatus(active: router.viewer == nil)
         .environment(\.zoomNamespace, zoom)
         .background(Theme.bg.ignoresSafeArea())
         .foregroundStyle(Theme.tx)
         .fullScreenCover(item: $router.viewer) { ctx in
             ViewerView(context: ctx)
                 .navigationTransition(.zoom(sourceID: ctx.start, in: zoom))
+                // The zoom transition adds its own swipe-down-to-dismiss, which races the viewer's pull-down
+                // (that also closes the info sheet and respects pinch-zoom); keep only the viewer's.
+                .interactiveDismissDisabled()
         }
         .task { await store.loadCollections() }
         .task { await store.watchEvents() }
@@ -61,31 +65,66 @@ struct MainTabs: View {
     }
 }
 
-/// The design's floating glass pill tab bar.
+/// The design's floating glass pill tab bar. Like the system tab bar, press anywhere on it and slide:
+/// the highlight follows the finger and the tab under it is picked on release.
 private struct TabPill: View {
     @Binding var tab: Tab
     @Namespace private var ns
+    @State private var frames: [Tab: CGRect] = [:]
+    /// The tab under the finger while pressed; nil when not touching.
+    @State private var pressed: Tab?
 
     var body: some View {
+        let shown = pressed ?? tab
         HStack(spacing: 0) {
             ForEach(Tab.allCases, id: \.self) { t in
-                Button {
-                    withAnimation(.snappy(duration: 0.25)) { tab = t }
-                } label: {
-                    Text(t.rawValue).font(.geist(14, .medium)).foregroundStyle(Theme.tx)
-                        .padding(.horizontal, 20).frame(height: 44)
-                        .background {
-                            if tab == t { Capsule().fill(Theme.sel).matchedGeometryEffect(id: "tab", in: ns) }
-                        }
-                        .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
+                Text(t.rawValue).font(.geist(14, .medium)).foregroundStyle(Theme.tx)
+                    .padding(.horizontal, 20).frame(height: 44)
+                    .background {
+                        if shown == t { Capsule().fill(Theme.sel).matchedGeometryEffect(id: "tab", in: ns) }
+                    }
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("pill")) } action: { frames[t] = $0 }
+                    .accessibilityAddTraits(tab == t ? [.isButton, .isSelected] : .isButton)
+                    .accessibilityAction { select(t) }
             }
         }
         .padding(4)
+        .coordinateSpace(.named("pill"))
+        .contentShape(Capsule())
+        .gesture(
+            DragGesture(minimumDistance: 0, coordinateSpace: .named("pill"))
+                .onChanged { g in
+                    let t = nearest(g.location.x)
+                    if t != pressed { withAnimation(.snappy(duration: 0.2)) { pressed = t } }
+                }
+                .onEnded { g in
+                    let t = nearest(g.location.x)
+                    pressed = nil
+                    select(t)
+                }
+        )
+        .scaleEffect(pressed == nil ? 1 : 1.04)
+        .animation(.snappy(duration: 0.2), value: pressed == nil)
+        .sensoryFeedback(.selection, trigger: pressed) { old, new in old != nil && new != nil }
         .background(.ultraThinMaterial, in: Capsule())
         .overlay(Capsule().stroke(Theme.line2, lineWidth: 1))
         .shadow(color: .black.opacity(0.18), radius: 12, y: 8)
+    }
+
+    private func select(_ t: Tab) {
+        withAnimation(.snappy(duration: 0.25)) { tab = t }
+    }
+
+    /// The tab whose frame is horizontally closest to `x`, so sliding past either end keeps the edge tab.
+    private func nearest(_ x: CGFloat) -> Tab {
+        Tab.allCases.min { a, b in
+            distance(x, frames[a]) < distance(x, frames[b])
+        } ?? tab
+    }
+
+    private func distance(_ x: CGFloat, _ r: CGRect?) -> CGFloat {
+        guard let r else { return .infinity }
+        return x < r.minX ? r.minX - x : x > r.maxX ? x - r.maxX : 0
     }
 }
 
@@ -105,6 +144,42 @@ struct LargeTitle<Trailing: View>: View {
 
 extension LargeTitle where Trailing == EmptyView {
     init(title: String) { self.title = title; self.trailing = EmptyView() }
+}
+
+extension View {
+    /// Pins `header` above a scroll view; content scrolls underneath it (see HeaderBackdrop).
+    func pinnedHeader<H: View>(@ViewBuilder _ header: () -> H) -> some View { modifier(PinnedHeader(header: header())) }
+}
+
+private struct PinnedHeader<H: View>: ViewModifier {
+    let header: H
+    @State private var scrolled = false
+    func body(content: Content) -> some View {
+        content
+            .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top > 1 } action: { _, s in
+                withAnimation(.easeOut(duration: 0.2)) { scrolled = s }
+            }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                VStack(alignment: .leading, spacing: 0) { header }
+                    .background { HeaderBackdrop(scrolled: scrolled) }
+            }
+    }
+}
+
+/// Behind a pinned header: plain background at rest; once content scrolls under it, a translucent blur
+/// that fades out at its bottom edge instead of ending on a hard line.
+struct HeaderBackdrop: View {
+    var scrolled: Bool
+    var body: some View {
+        ZStack {
+            Theme.bg.opacity(scrolled ? 0 : 1)
+            Rectangle().fill(.ultraThinMaterial).opacity(scrolled ? 1 : 0)
+                .mask(LinearGradient(stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.75), .init(color: .clear, location: 1)],
+                                     startPoint: .top, endPoint: .bottom))
+        }
+        .padding(.bottom, scrolled ? -16 : 0)
+        .ignoresSafeArea(edges: .top)
+    }
 }
 
 struct UnreachableBanner: View {

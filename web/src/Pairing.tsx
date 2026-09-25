@@ -35,18 +35,42 @@ export function Claim() {
   );
 }
 
-/** A new browser/phone joins: scanning the QR lands here with ?code=… and pairs automatically. */
+// iPadOS Safari reports itself as a Mac; touch support tells them apart.
+const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+
+/**
+ * A new browser/phone joins: scanning the QR lands here with ?code=… and pairs automatically.
+ * On iPhone/iPad the Camera app opens the QR in Safari, so the code isn't spent here right away:
+ * the person picks the Exposure app (via its exposure://pair link) or this browser.
+ */
 export function Pair() {
   const boot = useStore(s => s.boot);
   const initial = new URLSearchParams(location.search).get('code') ?? '';
   const [code, setCode] = useState(initial), [err, setErr] = useState(''), [busy, setBusy] = useState(false);
+  const [choosing, setChoosing] = useState(!!initial && isIOS());
+  const [noApp, setNoApp] = useState(false);
   const tried = useRef(false);
   const redeem = async (c: string) => {
     setBusy(true); setErr('');
     try { await api.redeem(c, deviceName()); history.replaceState(null, '', '/'); await boot(); }
     catch (x) { setErr((x as Error).message); history.replaceState(null, '', '/'); } finally { setBusy(false); }
   };
-  useEffect(() => { if (initial && !tried.current) { tried.current = true; void redeem(initial); } }, []); // eslint-disable-line
+  useEffect(() => { if (initial && !choosing && !tried.current) { tried.current = true; void redeem(initial); } }, []); // eslint-disable-line
+  const appLink = `exposure://pair?server=${encodeURIComponent(location.origin)}&code=${encodeURIComponent(initial)}`;
+  // If the page is still in front a moment after the tap, iOS had no app to open the link with.
+  const openApp = () => setTimeout(() => { if (document.visibilityState === 'visible') setNoApp(true); }, 1500);
+  if (choosing) return (
+    <div className="ob">
+      <div className="ob-top"><div className="logo" style={{ padding: 0 }}>exposure</div></div>
+      <div className="ob-page" style={{ maxWidth: 420 }}>
+        <h1>Add this device</h1>
+        <p className="lead">Open your library in the Exposure app, or keep using it in this browser.</p>
+        <a className="btn big" style={{ marginTop: 20, width: '100%', textDecoration: 'none', display: 'grid', placeItems: 'center' }} href={appLink} onClick={openApp}>Open in Exposure app</a>
+        <button className="btn big ghost" style={{ marginTop: 10, width: '100%' }} onClick={() => { setChoosing(false); tried.current = true; void redeem(initial); }}>Use in this browser</button>
+        {noApp && <p className="ob-foot">Nothing happened? The Exposure app may not be installed on this device. You can use Exposure in this browser instead.</p>}
+      </div>
+    </div>
+  );
   return (
     <div className="ob">
       <div className="ob-top"><div className="logo" style={{ padding: 0 }}>exposure</div></div>

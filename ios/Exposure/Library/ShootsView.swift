@@ -6,7 +6,6 @@ struct ShootsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                LargeTitle(title: "Shoots").padding(.bottom, 18)
                 UnreachableBanner { await store.loadCollections() }
                 LazyVStack(alignment: .leading, spacing: 30) {
                     ForEach(store.shoots) { s in
@@ -25,8 +24,9 @@ struct ShootsView: View {
                     }
                 }
             }
-            .padding(.bottom, 110)
+            .padding(.top, 8).padding(.bottom, 110)
         }
+        .pinnedHeader { LargeTitle(title: "Shoots").padding(.bottom, 10) }
         .scrollIndicators(.hidden)
         .refreshable { await store.loadCollections() }
         .toolbar(.hidden, for: .navigationBar)

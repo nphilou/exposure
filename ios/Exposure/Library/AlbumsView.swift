@@ -7,7 +7,6 @@ struct AlbumsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                LargeTitle(title: "Albums").padding(.bottom, 18)
                 UnreachableBanner { await store.loadCollections() }
                 if store.albums.isEmpty {
                     Text("No albums yet. Create them in Exposure on your computer.")
@@ -31,8 +30,9 @@ struct AlbumsView: View {
                 }
                 .padding(.horizontal, 18)
             }
-            .padding(.bottom, 110)
+            .padding(.top, 8).padding(.bottom, 110)
         }
+        .pinnedHeader { LargeTitle(title: "Albums").padding(.bottom, 10) }
         .scrollIndicators(.hidden)
         .refreshable { await store.loadCollections() }
         .toolbar(.hidden, for: .navigationBar)
@@ -45,9 +45,18 @@ struct AlbumDetailView: View {
     @Environment(ServerStore.self) private var store
     let album: Album
     @State private var feed = PhotoFeed()
+    @State private var sharing = false
 
     var body: some View {
         DetailScaffold(back: "Albums", title: album.title, date: Fmt.photos(album.count), counts: "") {
+            Button { sharing = true } label: {
+                Label("Share album", systemImage: "link").font(.geist(14, .medium)).foregroundStyle(Theme.tx)
+                    .padding(.horizontal, 14).frame(height: 34)
+                    .background(Capsule().stroke(Theme.tx3.opacity(0.5)))
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain).padding(.top, 14)
+        } content: {
             PhotoGrid(sections: [PhotoSection(id: "a\(album.id)", title: "", sub: "", photos: feed.photos)], showHeaders: false) {
                 Task { await feed.loadMore(store: store) }
             }
@@ -56,5 +65,6 @@ struct AlbumDetailView: View {
             var q = APIClient.PhotoQuery(); q.album = album.id
             await feed.load(q, store: store)
         }
+        .sheet(isPresented: $sharing) { ShareAlbumView(album: album) }
     }
 }

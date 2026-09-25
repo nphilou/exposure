@@ -32,6 +32,8 @@ export interface Storage {
   list(p: string): Promise<Entry[]>;
   /** Read a file; with `maxBytes` only the first bytes (enough for EXIF / embedded previews). */
   read(p: string, maxBytes?: number): Promise<Buffer>;
+  /** Read `length` bytes starting at `start` (an embedded preview deep inside a RAW file). */
+  readRange(p: string, start: number, length: number): Promise<Buffer>;
   stream(p: string): Promise<Readable>;
   /** Absolute on-disk path, when the source is a mounted folder. */
   localPath?(p: string): string;
@@ -56,11 +58,13 @@ export class LocalStorage implements Storage {
     return out;
   }
   async read(p: string, maxBytes?: number) {
-    if (!maxBytes) return fsp.readFile(this.localPath(p));
+    return maxBytes ? this.readRange(p, 0, maxBytes) : fsp.readFile(this.localPath(p));
+  }
+  async readRange(p: string, start: number, length: number) {
     const fh = await fsp.open(this.localPath(p), 'r');
     try {
-      const buf = Buffer.alloc(maxBytes);
-      const { bytesRead } = await fh.read(buf, 0, maxBytes, 0);
+      const buf = Buffer.alloc(length);
+      const { bytesRead } = await fh.read(buf, 0, length, start);
       return buf.subarray(0, bytesRead);
     } finally { await fh.close(); }
   }
@@ -83,6 +87,11 @@ export class DavStorage implements Storage {
     const data = await this.client.getFileContents(p, { format: 'binary', ...(maxBytes ? { headers: { Range: `bytes=0-${maxBytes - 1}` } } : {}) });
     const buf = Buffer.from(data as ArrayBuffer);
     return maxBytes ? buf.subarray(0, maxBytes) : buf; // servers that ignore Range send the whole file
+  }
+  async readRange(p: string, start: number, length: number) {
+    const res = await this.client.customRequest(p, { method: 'GET', headers: { Range: `bytes=${start}-${start + length - 1}` } });
+    const buf = Buffer.from(await res.arrayBuffer());
+    return res.status === 206 ? buf.subarray(0, length) : buf.subarray(start, start + length);
   }
   async stream(p: string) { return this.client.createReadStream(p) as unknown as Readable; }
 }

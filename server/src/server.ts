@@ -6,11 +6,13 @@ import path from 'node:path';
 import { config } from './config.js';
 import { db } from './db.js';
 import { applyRules, events, scan } from './indexer.js';
-import { GENERIC, PHOTOGRAPHER, getRules, group, normalize, saveRules, suggest, type FileRow, type Rules } from './rules.js';
-import { render } from './thumbs.js';
+import { GENERIC, PHOTOGRAPHER, ROLES, getRules, group, isEdited, newTrace, normalize, ruleError, saveRules, suggest, type FileRow, type Rules, type Trace } from './rules.js';
+import { compileEvent, compileFile } from './patterns.js';
+import { sendFile, sendOriginal, sendResized } from './images.js';
 import { getLibrary } from './library.js';
 import { setupRoutes } from './setup.js';
 import { authRoutes } from './auth.js';
+import { shareRoutes } from './shares.js';
 
 const rows = <T,>(sql: string, ...args: any[]) => db.prepare(sql).all(...args) as T[];
 const row = <T,>(sql: string, ...args: any[]) => db.prepare(sql).get(...args) as T | undefined;
@@ -50,6 +52,7 @@ export async function build() {
   await app.register(cookie);
 
   authRoutes(app);
+  shareRoutes(app);
 
   app.get('/api/stats', async () => ({
     photos: row<any>('SELECT COUNT(*) n FROM photos')!.n, shoots: row<any>('SELECT COUNT(*) n FROM shoots')!.n,
@@ -118,42 +121,11 @@ export async function build() {
     return { ok: true };
   });
 
-  // Images: /thumb (grid) and /preview (viewer) are resized JPEGs; /file streams the original for download.
-  // Without ?v, the preferred version from the library rules.
-  const versionRow = (id: string, v?: string) => {
-    const order = getRules().preferred;
-    return row<any>(`SELECT * FROM versions WHERE photo_id = ? ${v ? 'AND key = ?' : ''}
-      ORDER BY CASE key WHEN '${order[0]}' THEN 0 WHEN '${order[1]}' THEN 1 ELSE 2 END LIMIT 1`, ...(v ? [id, v] : [id]));
-  };
-  const rel = (v: any) => v.file as string;   // relative to the library folder
-  const image = (width: (q: any) => number) => async (req: any, reply: any) => {
-    const lib = getLibrary(), v = versionRow(req.params.id, req.query.v);
-    if (!lib || !v) return reply.code(404).send();
-    const out = await render(`${v.photo_id}-${v.key}-${(v.size + v.mtime).toString(36)}`, lib.storage, path.posix.join(lib.base, rel(v)), width(req.query), v.key === 'raw');
-    if (!out) return reply.code(404).send();
-    return reply.header('cache-control', 'private, max-age=31536000, immutable').type('image/jpeg').send(fsSync.createReadStream(out));
-  };
-  app.get('/api/photos/:id/thumb', image(q => Math.min(Number(q.w ?? 480), 1200)));
-  app.get('/api/photos/:id/preview', image(() => 2400));
-  // Full resolution for pinch-zoom: JPEG/PNG originals are streamed untouched, anything else (HEIC, TIFF, RAW) is rendered at full size.
-  app.get<{ Params: { id: string }; Querystring: { v?: string } }>('/api/photos/:id/original', async (req, reply) => {
-    const lib = getLibrary(), v = versionRow(req.params.id, req.query.v);
-    if (!lib || !v) return reply.code(404).send();
-    const file = path.posix.join(lib.base, rel(v));
-    const ext = path.posix.extname(file).toLowerCase();
-    const cache = 'private, max-age=31536000, immutable';
-    if (ext === '.jpg' || ext === '.jpeg' || ext === '.png')
-      return reply.header('cache-control', cache).type(ext === '.png' ? 'image/png' : 'image/jpeg').send(await lib.storage.stream(file));
-    const out = await render(`${v.photo_id}-${v.key}-${(v.size + v.mtime).toString(36)}`, lib.storage, file, 100_000, v.key === 'raw');
-    if (!out) return reply.code(404).send();
-    return reply.header('cache-control', cache).type('image/jpeg').send(fsSync.createReadStream(out));
-  });
-  app.get<{ Params: { id: string }; Querystring: { v?: string } }>('/api/photos/:id/file', async (req, reply) => {
-    const lib = getLibrary(), v = versionRow(req.params.id, req.query.v);
-    if (!lib || !v) return reply.code(404).send();
-    return reply.header('content-disposition', `attachment; filename="${path.basename(v.file)}"`)
-      .send(await lib.storage.stream(path.posix.join(lib.base, rel(v))));
-  });
+  app.get<{ Params: { id: string }; Querystring: { v?: string; w?: string } }>('/api/photos/:id/thumb', async (req, reply) =>
+    sendResized(reply, req.params.id, req.query.v, Math.min(Number(req.query.w ?? 480), 1200)));
+  app.get<{ Params: { id: string }; Querystring: { v?: string } }>('/api/photos/:id/preview', async (req, reply) => sendResized(reply, req.params.id, req.query.v, 2400));
+  app.get<{ Params: { id: string }; Querystring: { v?: string } }>('/api/photos/:id/original', async (req, reply) => sendOriginal(reply, req.params.id, req.query.v));
+  app.get<{ Params: { id: string }; Querystring: { v?: string } }>('/api/photos/:id/file', async (req, reply) => sendFile(reply, req.params.id, req.query.v));
 
   // Server-sent events: the UI refreshes when a rescan finishes ("Exposure is watching /Images…").
   app.get('/api/events', (req, reply) => {
@@ -166,40 +138,68 @@ export async function build() {
   // ── Library rules ──
   const allFiles = () => db.prepare('SELECT path, dir, name, ext, size, mtime FROM files').all() as unknown as FileRow[];
   const libName = () => path.posix.basename(getLibrary()?.base ?? '') || 'Library';
-  const summary = (files: FileRow[], rules: Rules) => {
-    const photos = group(files, rules, libName());
+  const summary = (files: FileRow[], rules: Rules, trace?: Trace) => {
+    const photos = group(files, rules, libName(), trace);
+    const models = rules.styledCameras.length
+      ? new Map(rows<{ path: string; camera: string }>("SELECT path, json_extract(meta, '$.camera') camera FROM files WHERE meta IS NOT NULL").map(r => [r.path, r.camera]))
+      : new Map<string, string>();
     return {
-      summary: { files: files.length, photos: photos.length, edited: photos.filter(p => p.versions.some(v => v.role === 'edited')).length,
+      summary: { files: files.length, photos: photos.length, edited: photos.filter(p => isEdited(p, rules, f => models.get(f))).length,
         events: new Set(photos.map(p => p.event.id)).size },
       photos,
     };
   };
   app.get('/api/rules', async () => {
     const rules = getRules(), files = allFiles();
-    return { rules, presets: { generic: GENERIC, photographer: PHOTOGRAPHER }, suggestions: suggest(files, rules), summary: summary(files, rules).summary };
+    // Cameras with their own JPEGs in the library, for "count these as edited".
+    const cameras = rows<{ camera: string; n: number }>(`SELECT p.camera, COUNT(*) n FROM photos p WHERE p.camera IS NOT NULL
+      AND EXISTS (SELECT 1 FROM versions v WHERE v.photo_id = p.id AND v.key = 'camera') GROUP BY p.camera ORDER BY n DESC`);
+    return { rules, presets: { generic: GENERIC, photographer: PHOTOGRAPHER }, suggestions: suggest(files, rules), summary: summary(files, rules).summary, cameras };
   });
-  app.put<{ Body: Partial<Rules> }>('/api/rules', async req => {
+  app.put<{ Body: Partial<Rules> }>('/api/rules', async (req, reply) => {
+    const error = ruleError(normalize(req.body ?? {}));
+    if (error) return reply.code(400).send({ error });
     const rules = saveRules(req.body ?? {});
     void applyRules();
     return { rules };
   });
-  // Live preview of draft rules: totals for the whole library plus how one folder would be grouped.
-  app.post<{ Body: { rules: Partial<Rules>; folder?: string } }>('/api/rules/preview', async req => {
-    const rules = normalize(req.body?.rules ?? {}), files = allFiles();
-    const { summary: s, photos } = summary(files, rules);
-    // Folders worth previewing: the ones where rules make a difference (several kinds of file) first.
-    const byDir = new Map<string, { roles: Set<string>; n: number }>();
-    for (const p of photos) {
-      const d = byDir.get(p.dir) ?? byDir.set(p.dir, { roles: new Set(), n: 0 }).get(p.dir)!;
-      d.n++; p.versions.forEach(v => d.roles.add(v.role));
-    }
-    const folders = [...byDir].sort((a, b) => b[1].roles.size - a[1].roles.size || b[0].localeCompare(a[0])).slice(0, 40).map(([d]) => d);
-    const folder = req.body?.folder !== undefined && byDir.has(req.body.folder) ? req.body.folder : folders[0] ?? '';
-    const sample = photos.filter(p => p.dir === folder).sort((a, b) => a.name.localeCompare(b.name)).slice(0, 80)
-      .map(p => ({ name: p.name, versions: p.versions.map(v => ({ role: v.role, label: v.label, file: v.file.slice(folder ? folder.length + 1 : 0) })) }));
+  // Live preview of draft rules: totals for the whole library and what each pattern matched.
+  app.post<{ Body: { rules: Partial<Rules> } }>('/api/rules/preview', async req => {
+    const rules = normalize(req.body?.rules ?? {}), files = allFiles(), trace = newTrace();
+    const { summary: s, photos } = summary(files, rules, trace);
     const skipped = s.files - photos.reduce((n, p) => n + p.versions.length, 0);
-    return { summary: { ...s, skipped }, folders, folder, sample };
+    return { summary: { ...s, skipped }, patterns: patternReport(rules, trace) };
   });
+
+  // What each pattern matched, and what none did: the misses show people which formats to add.
+  const leaf = (p: string) => p.split('/').at(-1) || '(library folder)';
+  const misses = (list: string[]) => {
+    const names = [...new Set(list.map(leaf))];
+    return { count: names.length, examples: names.sort((a, b) => Number(/\d/.test(b)) - Number(/\d/.test(a))).slice(0, 6) };
+  };
+  // Examples: one per pattern first, so each pattern shows what it did.
+  const firstPerPattern = <T extends { pattern: number }>(list: T[], n: number) => {
+    const seen = new Set<number>(), firsts: T[] = [];
+    for (const x of list) if (!seen.has(x.pattern)) { seen.add(x.pattern); firsts.push(x); }
+    return [...firsts, ...list.slice(0, n).filter(x => !firsts.includes(x))].slice(0, n);
+  };
+  const patternReport = (rules: Rules, t: Trace) => {
+    const count = (n: number, hits: { pattern: number }[]) => { const c = Array<number>(n).fill(0); hits.forEach(h => c[h.pattern]++); return c; };
+    const events = [...t.events].map(([folder, m]) => ({ ...m, folder: leaf(folder) }));
+    const unmatched = misses(t.unmatched);
+    const versions = Object.fromEntries(ROLES.map(role => {
+      const srcs = rules.versions[role];
+      // "Export/DSC1.jpg": as much of the path as the pattern describes.
+      const hits = t.versions[role].map(h => ({ ...h, file: h.file.split('/').slice(-srcs[h.pattern].split('/').length).join('/') }));
+      return [role, { sources: srcs, counts: count(srcs.length, hits), errors: srcs.map(s => compileFile(role, s).error ?? null),
+        examples: firstPerPattern(hits, 3), misses: role === 'edited' ? misses(t.unpaired) : unmatched }];
+    }));
+    return {
+      events: { sources: rules.eventPatterns, counts: count(rules.eventPatterns.length, events), errors: rules.eventPatterns.map(s => compileEvent(s).error ?? null),
+        examples: firstPerPattern(events, 3), misses: misses([...t.undated]) },
+      versions,
+    };
+  };
 
   setupRoutes(app);
   app.post('/api/rescan', async () => { void scan(); return { ok: true }; });

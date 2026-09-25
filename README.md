@@ -54,14 +54,22 @@ Out of the box Exposure is a plain photo gallery: every JPEG, PNG, TIFF, WebP an
 library folder is shown, dated from its EXIF data. Files with the same name in a folder (`DSC1.ARW` +
 `DSC1.JPG`) are one photo with two versions, and a folder named like `2016-01-25 Paris` becomes an event.
 
-Everything beyond that is a **library rule** you can see and change in Settings → Library rules, with a
-live preview of how a real folder is grouped:
+Everything beyond that is a **pattern** you can see and change in Settings → Library, with a live
+preview of how a real folder is grouped:
 
 ```
-Files in folders named  Export*  → Edited      /Images/2023-08-30 Pass/DSC01.ARW       Original
-Files in folders named  RAW      → Original    /Images/2023-08-30 Pass/DSC01.JPG       Camera
-DSC1-1.jpg next to DSC1.ARW      → Edited      /Images/2023-08-30 Pass/Export/DSC01.jpg Edited  ← shown
+Shoot folders   {date} {title}                                   2016-01-25 Paris, 20160125_Paris, 2016-01 Paris
+Original        {name}.*  ·  RAW/{name}.*                        DSC1.ARW, RAW/DSC1.ARW
+Camera          {name}.{jpg,jpeg}                                DSC1.JPG
+Edited          Export*/{name}.*  ·  {name}-{n}.{jpg,jpeg}       Export/DSC1.jpg, DSC1-1.jpg
 ```
+File patterns start in the photo's folder, and files that share a `{name}` are one photo. `{name}.*` means any
+RAW format for originals and any image for the others, `{jpg,jpeg}` either one and `*` anything; case is ignored
+and `-`, `_` and spaces are interchangeable. A name with extra text like `{name}-{n}` only counts when a file with
+that name exists, so unrelated `Paris-1.jpg` and `Paris-2.jpg` stay separate photos. Shoot folder patterns also
+accept `/…/`, a regular expression with named groups (`(?<date>…)`, `(?<title>…)`). Each pattern shows how many
+folders or files it matches, and which ones nothing matches.
+
 The grid shows each photo's first available version in a preferred order (Edited → Camera → Original
 by default), and the library can open on "Edited only". After the first scan, Exposure suggests rules
 that match your folders ("337 folders are named Export. Show their photos as the edited version?").
@@ -69,6 +77,14 @@ Changing a rule regroups the library in seconds without rescanning the NAS.
 
 Exposure never writes to the folder; favorites, albums, rules and paired devices live in its own SQLite
 DB (`/data/exposure.db`).
+
+## Sharing an album
+Open an album and choose **Share…** (web) or **Share album** (iPhone) to create a read-only link for people
+who don't have a device paired. Each link has a name, an optional expiry and a choice to allow full-resolution
+downloads, and you can revoke it at any time. The link is shown only when you create it, because Exposure keeps
+only a hash of it. Guests see only that album's photos, with no folders, file names on the NAS or other versions,
+and photos you add to the album later are shared too. The link only works for people who can reach
+your server, so set `EXPOSURE_PUBLIC_URL` (see above) to share outside your home network.
 
 ## Other ways to connect
 Instead of mounting a folder you can point Exposure at a NAS over **WebDAV** (must be enabled on the NAS)

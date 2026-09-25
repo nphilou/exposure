@@ -31,6 +31,12 @@ CREATE TABLE IF NOT EXISTS album_photos (
   album_id INTEGER NOT NULL REFERENCES albums(id) ON DELETE CASCADE, photo_id TEXT NOT NULL,
   PRIMARY KEY (album_id, photo_id)
 );
+-- Read-only links to one album for people without a device. Only a hash of the token is stored.
+CREATE TABLE IF NOT EXISTS shares (
+  id TEXT PRIMARY KEY, album_id INTEGER NOT NULL REFERENCES albums(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE, name TEXT NOT NULL, allow_originals INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL, expires_at INTEGER, last_seen INTEGER
+);
 -- One row per paired browser/phone/app. Only a hash of the token is stored.
 CREATE TABLE IF NOT EXISTS devices (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,

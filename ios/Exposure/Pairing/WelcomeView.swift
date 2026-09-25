@@ -45,6 +45,7 @@ struct WelcomeView: View {
                 Task { await pair(target) }
             } onCancel: { scanning = false }
         }
+        .onAppear { if let r = store.unpairedReason { error = r; store.unpairedReason = nil } }
         .sheet(isPresented: $manual) {
             ManualPairView { target in await pair(target) }
                 .presentationDetents([.large])

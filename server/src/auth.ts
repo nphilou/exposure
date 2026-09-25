@@ -12,7 +12,7 @@ const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I
 const newCode = () => Array.from(crypto.randomBytes(8), b => ALPHABET[b % ALPHABET.length]).join('');
 const norm = (c: string) => (c ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 export const pretty = (c: string) => `${c.slice(0, 4)}-${c.slice(4)}`;
-const sha = (t: string) => crypto.createHash('sha256').update(t).digest('hex');
+export const sha = (t: string) => crypto.createHash('sha256').update(t).digest('hex');
 const same = (a: string, b: string) => a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
 
 const COOKIE = 'exposure_device';
@@ -53,16 +53,17 @@ export function authenticate(req: FastifyRequest): Device | null {
 
 // Small brute-force guard for the two unauthenticated endpoints.
 const fails = new Map<string, { n: number; reset: number }>();
-function limited(req: FastifyRequest) {
+export function limited(req: FastifyRequest) {
   const f = fails.get(req.ip);
   return !!f && f.reset > Date.now() && f.n >= 8;
 }
-function fail(req: FastifyRequest) {
+export function fail(req: FastifyRequest) {
   const f = fails.get(req.ip);
   if (!f || f.reset < Date.now()) fails.set(req.ip, { n: 1, reset: Date.now() + 60_000 }); else f.n++;
 }
 
-const PUBLIC = ['/api/session', '/api/claim', '/api/pair/redeem'];
+// /api/s/<token>/… is an album share link: it carries its own token and is checked in shares.ts.
+const PUBLIC = ['/api/session', '/api/claim', '/api/pair/redeem', '/api/s/'];
 
 export function authRoutes(app: FastifyInstance) {
   app.addHook('onRequest', async (req, reply) => {
@@ -114,12 +115,15 @@ export function authRoutes(app: FastifyInstance) {
       .map(d => ({ id: d.id, name: d.name, createdAt: d.created_at, lastSeen: d.last_seen, current: d.id === me?.id }));
   });
 
-  app.delete<{ Params: { id: string } }>('/api/devices/:id', async (req, reply) => {
+  const revoke = (req: FastifyRequest, reply: FastifyReply, id: string) => {
     const me = authenticate(req);
     const total = (db.prepare('SELECT COUNT(*) n FROM devices').get() as any).n;
     if (total <= 1) return reply.code(400).send({ error: 'This is the only paired device. Removing it would lock you out.' });
-    db.prepare('DELETE FROM devices WHERE id = ?').run(req.params.id);
-    if (me?.id === req.params.id) reply.clearCookie(COOKIE, { path: '/' });
+    db.prepare('DELETE FROM devices WHERE id = ?').run(id);
+    if (me?.id === id) reply.clearCookie(COOKIE, { path: '/' });
     return { ok: true };
-  });
+  };
+  // The calling device removes itself (the iPhone app on Disconnect, or after re-pairing elsewhere).
+  app.delete('/api/devices/me', async (req, reply) => revoke(req, reply, authenticate(req)!.id));
+  app.delete<{ Params: { id: string } }>('/api/devices/:id', async (req, reply) => revoke(req, reply, req.params.id));
 }

@@ -6,21 +6,29 @@ export interface Photo {
 }
 export interface Shoot { id: string; folder: string; title: string; date: string; camera: string | null; count: number; edited: number; cover: string | null }
 export interface Album { id: number; title: string; count: number }
+/** A photo as a share-link guest sees it: no folders, versions or favorites. */
+export type GuestPhoto = Pick<Photo, 'id' | 'name' | 'shootId' | 'shootTitle' | 'takenAt' | 'camera' | 'lens' | 'focal' | 'fnum' | 'shutter' | 'iso' | 'ar'>;
+export interface SharedAlbum { title: string; count: number; allowOriginals: boolean }
+export interface ShareLink { id: string; name: string; allowOriginals: boolean; createdAt: number; expiresAt: number | null; lastSeen: number | null }
 export interface Stats { photos: number; shoots: number; cameras: number; edited: number }
 
 export type Role = 'edited' | 'camera' | 'raw';
 export interface Rules {
-  folders: { name: string; role: Role }[]; editSuffix: boolean; pairSameName: boolean; preferred: Role[];
-  datedFolders: boolean; onlyDated: boolean; exclude: string[]; types: string[]; defaultView: 'all' | 'edited';
+  eventPatterns: string[]; onlyDated: boolean; versions: Record<Role, string[]>;
+  preferred: Role[]; exclude: string[]; defaultView: 'all' | 'edited'; styledCameras: string[];
 }
 export interface Suggestion { id: string; text: string; count: number; apply: Partial<Rules> }
 export interface RulesSummary { files: number; photos: number; edited: number; events: number; skipped?: number }
-export interface RulesPreview { summary: RulesSummary & { skipped: number }; folders: string[]; folder: string;
-  sample: { name: string; versions: { role: Role; label: string; file: string }[] }[] }
-/** Applies a suggestion on top of rules; folder rules are merged rather than replaced. */
+export interface RulesPreview { summary: RulesSummary & { skipped: number };
+  patterns: { events: PatternReport<{ folder: string; title: string; date: string }>; versions: Record<Role, PatternReport<{ file: string; name: string }>> } }
+/** Per pattern (`sources`, as normalised by the server): how many folders/files it matched, or why it's invalid; plus examples and what nothing matched. */
+export interface PatternReport<E> { sources: string[]; counts: number[]; errors: (string | null)[]; examples: (E & { pattern: number })[]; misses: { count: number; examples: string[] } }
+const union = (a: string[], b: string[] = []) => [...a, ...b.filter(p => !a.some(x => x.toLowerCase() === p.toLowerCase()))];
+/** Applies a suggestion on top of rules; patterns are merged rather than replaced. */
 export const mergeRules = (r: Rules, apply: Partial<Rules>): Rules => ({
   ...r, ...apply,
-  folders: [...r.folders, ...(apply.folders ?? []).filter(f => !r.folders.some(x => x.name.toLowerCase() === f.name.toLowerCase()))],
+  eventPatterns: union(r.eventPatterns, apply.eventPatterns),
+  versions: { raw: union(r.versions.raw, apply.versions?.raw), camera: union(r.versions.camera, apply.versions?.camera), edited: union(r.versions.edited, apply.versions?.edited) },
 });
 
 export interface SetupState {
@@ -78,9 +86,9 @@ export const api = {
   reset: () => j('/api/setup/reset', post({})),
   rescan: () => j('/api/rescan', post({})),
   stats: () => j<Stats>('/api/stats'),
-  rules: () => j<{ rules: Rules; presets: { generic: Rules; photographer: Rules }; suggestions: Suggestion[]; summary: RulesSummary }>('/api/rules'),
+  rules: () => j<{ rules: Rules; presets: { generic: Rules; photographer: Rules }; suggestions: Suggestion[]; summary: RulesSummary; cameras: { camera: string; n: number }[] }>('/api/rules'),
   saveRules: (r: Rules) => j<{ rules: Rules }>('/api/rules', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(r) }),
-  previewRules: (rules: Rules, folder?: string) => j<RulesPreview>('/api/rules/preview', post({ rules, folder })),
+  previewRules: (rules: Rules) => j<RulesPreview>('/api/rules/preview', post({ rules })),
   shoots: () => j<Shoot[]>('/api/shoots'),
   albums: () => j<Album[]>('/api/albums'),
   photos: (p: Record<string, string | undefined>) =>
@@ -89,4 +97,20 @@ export const api = {
   thumb: (id: string, w = 480) => `/api/photos/${id}/thumb?w=${w}`,
   preview: (id: string, v?: string) => `/api/photos/${id}/preview${v ? `?v=${v}` : ''}`,
   file: (id: string, v: string) => `/api/photos/${id}/file?v=${v}`,
+  shares: (album: number) => j<ShareLink[]>(`/api/albums/${album}/shares`),
+  createShare: (album: number, b: { name: string; expiresInDays: number | null; allowOriginals: boolean }) =>
+    j<ShareLink & { path: string }>(`/api/albums/${album}/shares`, post(b)),
+  deleteShare: (id: string) => j(`/api/shares/${id}`, { method: 'DELETE' }),
+};
+
+/** A share link's album, for guests. The token in the page URL is the only credential. */
+export const guest = (token: string) => {
+  const base = `/api/s/${encodeURIComponent(token)}`;
+  return {
+    album: () => j<SharedAlbum>(base),
+    photos: (limit: number, offset: number) => j<GuestPhoto[]>(`${base}/photos?limit=${limit}&offset=${offset}`),
+    thumb: (id: string, w = 480) => `${base}/photos/${id}/thumb?w=${w}`,
+    preview: (id: string) => `${base}/photos/${id}/preview`,
+    original: (id: string) => `${base}/photos/${id}/original`,
+  };
 };

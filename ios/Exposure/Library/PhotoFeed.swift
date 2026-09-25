@@ -30,7 +30,7 @@ final class PhotoFeed {
     }
 }
 
-struct PhotoSection: Identifiable {
+struct PhotoSection: Identifiable, Equatable {
     let id: String
     let title: String
     let sub: String

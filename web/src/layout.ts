@@ -1,19 +1,20 @@
 import type { Photo } from './api';
 
-export type Item =
+type Tile = Pick<Photo, 'shootId' | 'shootTitle' | 'takenAt' | 'ar'>;
+export type Item<P extends Tile = Photo> =
   | { type: 'header'; title: string; sub: string; height: number }
-  | { type: 'row'; photos: { p: Photo; w: number }[]; height: number };
+  | { type: 'row'; photos: { p: P; w: number }[]; height: number };
 
 const GAP = 6;
 
 /** Justified rows: each row is scaled so its photos exactly fill the container width. */
-export function layout(photos: Photo[], width: number, target: number): Item[] {
-  const items: Item[] = [];
+export function layout<P extends Tile>(photos: P[], width: number, target: number): Item<P>[] {
+  const items: Item<P>[] = [];
   let i = 0;
   while (i < photos.length) {
     const p0 = photos[i];
     const head = { title: p0.shootTitle, sub: new Date(p0.takenAt).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }) };
-    const group: Photo[] = [];
+    const group: P[] = [];
     while (i < photos.length && photos[i].shootId === p0.shootId) group.push(photos[i++]);
     items.push({ type: 'header', ...head, height: 64 });
     for (let s = 0; s < group.length;) {

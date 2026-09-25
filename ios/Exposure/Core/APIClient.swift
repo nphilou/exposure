@@ -76,9 +76,40 @@ struct APIClient: Sendable {
         let r: TokenResponse = try await send(request(url("/api/pair/redeem"), method: "POST", body: ["code": code, "name": name]))
         return r.token
     }
+    struct PairCode: Decodable, Sendable { let code: String; let expiresAt: Double; let path: String }
+    /// One-time code another device can redeem; `path` is `/pair?code=…`, appended to the server's address.
+    func newPairingCode() async throws -> PairCode {
+        try await send(request(url("/api/pair/new"), method: "POST", body: [String: String]()))
+    }
+    /// Removes this device from the server (its token stops working).
+    func revokeSelf() async throws {
+        struct OK: Decodable {}
+        let _: OK = try await send(request(url("/api/devices/me"), method: "DELETE"))
+    }
     func shoots() async throws -> [Shoot] { try await get("/api/shoots") }
     func albums() async throws -> [Album] { try await get("/api/albums") }
+    func createAlbum(_ title: String) async throws -> Int {
+        struct Created: Decodable { let id: Int }
+        let r: Created = try await send(request(url("/api/albums"), method: "POST", body: ["title": title]))
+        return r.id
+    }
+    func addToAlbum(_ album: Int, photoIds: [String]) async throws {
+        struct OK: Decodable {}
+        let _: OK = try await send(request(url("/api/albums/\(album)/photos"), method: "POST", body: ["photoIds": photoIds]))
+    }
     func suggestions() async throws -> [Suggestion] { try await get("/api/search/suggest") }
+
+    // Album share links (read-only pages at /s/<token> for people without a device).
+    func shares(album: Int) async throws -> [AlbumShare] { try await get("/api/albums/\(album)/shares") }
+    struct NewShare: Encodable { let name: String; let expiresInDays: Int?; let allowOriginals: Bool }
+    /// `path` is `/s/<token>`, appended to the server's address. The server can't show it again.
+    func createShare(album: Int, _ body: NewShare) async throws -> CreatedShare {
+        try await send(request(url("/api/albums/\(album)/shares"), method: "POST", body: body))
+    }
+    func deleteShare(_ id: String) async throws {
+        struct OK: Decodable {}
+        let _: OK = try await send(request(url("/api/shares/\(id)"), method: "DELETE"))
+    }
 
     struct PhotoQuery: Hashable, Sendable {
         var q: String?, shoot: String?, album: Int?, fav = false, edited = false
